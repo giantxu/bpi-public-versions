@@ -288,6 +288,7 @@ def _pick(props, pt):
 CAT = [("Invoice No.", "invoice number (contains supplier abbreviation)"), ("logo", "supplier logo"),
        ("letterhead", "supplier letterhead"), ("Supplier name and address", "supplier name and address"),
        ("Supplier name", "supplier name"), ("contact", "supplier contact information"),
+       ("Manufacturer", "manufacturer names"), ("Amount in words", "amounts"),
        ("Bank", "bank account / tax ID"), ("Seal", "seal"), ("Signature", "signature"), ("Name", "personal name"),
        ("Payment", "payment terms"), ("Liquidated", "liquidated damages terms"), ("Quantities", "quantities and prices"),
        ("price", "price"), ("Amount", "amounts"), ("ratio", "payment ratio")]
