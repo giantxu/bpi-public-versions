@@ -80,7 +80,7 @@ NUMW = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirt
 WORDS_START = re.compile(r"(?i)\bsay\b|\b(?:(?:china\s*)?yuan|rmb|renminbi|us\s*dollars?|dollars?|ringgit(?:\s*malaysia)?|usd)\s+" + NUMW + r"\b|\b" + NUMW + r"(?:[\s,\-]+(?:and\s+)?" + NUMW + r")*[\s\-]+(?:(?:china\s*)?yuan|rmb|dollars?|ringgit)?\s*only\b")
 WORDS_NUM = re.compile(r"(?i)\b" + NUMW + r"\b")
 CN_WORDS = re.compile(r"大\s*写\s*[:：)）]?\s*[^，,。；;（(\s][^，,。；;（(]*|(?:人民币|美元|马币|林吉特)?[零壹贰叁肆伍陆柒捌玖拾佰仟万亿][零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整正]{2,}[元圆整正)）]*")
-INVNO_RE = re.compile(r"(?i)(?:invoice|inv\.?)\s*(?:no|n[o0º°®]?|№|number|ne|nd|nc|ng)?\s*\.?\s*[:：.;；e]?\s*([A-Z0-9][A-Z0-9\-–•·_/.:]{4,}[A-Z0-9])")
+INVNO_RE = re.compile(r"(?i)\b(?:invoice|inv\.)\s*(?:no\b|n[o0º°®]|№|number|ne\b|nd\b|nc\b|ng\b)?\s*\.?\s*[:：.;；]?\s*((?-i:[A-Z0-9][A-Z0-9\-–•·_/.:]{4,}[A-Z0-9]))")
 REMARK_HDR = re.compile(r"(?i)^\s*(?:备\s*注|remarks?|生产厂家|制造商|厂\s*家|manufacturer|brand|品\s*牌)\s*$")
 DEPT_RE = re.compile(r"(?i)项目部|本公司|\bproject\b")
 
@@ -194,6 +194,8 @@ def propose(lines, terms, page_kind="scan"):
     for d in lines:
         m = INVNO_RE.search(d["t"])
         if not m:
+            continue
+        if not re.search(r"\d", m.group(1)):
             continue
         segs = [x for x in re.split(r"[-–•·:/_.\s]+", m.group(1)) if x]
         if any(re.match(r"[A-Za-z]{3,}", x) and not OWN_CODE.fullmatch(x) and not OWN.search(x) for x in segs):
