@@ -52,7 +52,7 @@ The skill's instructions are in [`SKILL.md`](SKILL.md); details in [`references/
    python <skill>/scripts/bpi.py doctor
    ```
 
-Windows step-by-step guide (Chinese): [`docs/windows-install.zh.md`](docs/windows-install.zh.md).
+Windows step-by-step guide: [`docs/windows-install.md`](docs/windows-install.md) (中文版: [`docs/windows-install.zh.md`](docs/windows-install.zh.md)).
 
 ## Command reference
 

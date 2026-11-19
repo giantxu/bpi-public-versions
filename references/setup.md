@@ -20,6 +20,9 @@ Check everything with `python <skill>/scripts/bpi.py doctor`.
 
 ## Windows notes
 
+Step-by-step guide: `docs/windows-install.md` in the repository (Chinese: `docs/windows-install.zh.md`).
+
+
 - Use `python` (or `py`) instead of `python3`. Paths with spaces or Chinese characters are fine – quote them.
 - Copy the skill folder `bpi-public-versions` into the skills folder of the assistant you use (or import the packaged
   `.skill` file through its settings).

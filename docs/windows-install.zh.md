@@ -1,6 +1,7 @@
 # Windows 安装说明
 
 适用于 Windows 10 / 11。安装一次即可，之后每个新案件只需建一个配置文件。
+English version: [windows-install.md](windows-install.md)
 
 ## 一、需要准备的软件
 
