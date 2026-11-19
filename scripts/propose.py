@@ -46,9 +46,17 @@ def overlap(a, b):
 OWN = re.compile(r"(?!x)x")
 
 
-def set_own(regex):
-    global OWN
+# Segments of the submitter's own document codes (e.g. its company prefix in invoice numbers); from
+# bpi_config.json "own_code_regex". Any other alphabetic segment of 3+ letters in an invoice number is
+# treated as a counterparty abbreviation.
+OWN_CODE = re.compile(r"(?!x)x")
+
+
+def set_own(regex, code_regex=None):
+    global OWN, OWN_CODE
     OWN = re.compile(regex, re.I)
+    if code_regex:
+        OWN_CODE = re.compile(code_regex, re.I)
 NUM = r"\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 AMOUNT_RES = [
     re.compile(r"(?:¥|￥|RMB|CNY|USD|US\$|RM|MYR|\$)\s*[:：]?\s*(?:" + NUM + r")(?:\s*(?:元|万元|yuan))?", re.I),
@@ -66,6 +74,15 @@ PCT_RE = re.compile(r"\d+(?:\.\d+)?\s*[%％‰]|百分之|千分之|万分之|[�
 PRICE_HDR = re.compile(r"(?i)单\s*价|合\s*价|总\s*价|金\s*额|价\s*格|价\s*款|造\s*价|费\s*用|小\s*计|合\s*计|总\s*计|含税|不含税|unit\s*price|amount|total|price|sum|value|subtotal")
 QTY_HDR = re.compile(r"(?i)^(?:数\s*量|工\s*程\s*量|qty\.?|quantity|数量\s*\(.*\)|数量（.*）)$|^数\s*量")
 NUMERIC = re.compile(r"^[\s¥￥$]*[-+]?(?:\d{1,3}(?:[,，]\d{3})+|\d+)(?:[.．]\d+)?\s*(?:元|万元|%)?$")
+
+
+NUMW = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|cents?)"
+WORDS_START = re.compile(r"(?i)\bsay\b|\b(?:(?:china\s*)?yuan|rmb|renminbi|us\s*dollars?|dollars?|ringgit(?:\s*malaysia)?|usd)\s+" + NUMW + r"\b|\b" + NUMW + r"(?:[\s,\-]+(?:and\s+)?" + NUMW + r")*[\s\-]+(?:(?:china\s*)?yuan|rmb|dollars?|ringgit)?\s*only\b")
+WORDS_NUM = re.compile(r"(?i)\b" + NUMW + r"\b")
+CN_WORDS = re.compile(r"大\s*写\s*[:：)）]?\s*[^，,。；;（(\s][^，,。；;（(]*|(?:人民币|美元|马币|林吉特)?[零壹贰叁肆伍陆柒捌玖拾佰仟万亿][零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整正]{2,}[元圆整正)）]*")
+INVNO_RE = re.compile(r"(?i)(?:invoice|inv\.?)\s*(?:no|n[o0º°®]?|№|number|ne|nd|nc|ng)?\s*\.?\s*[:：.;；e]?\s*([A-Z0-9][A-Z0-9\-–•·_/.:]{4,}[A-Z0-9])")
+REMARK_HDR = re.compile(r"(?i)^\s*(?:备\s*注|remarks?|生产厂家|制造商|厂\s*家|manufacturer|brand|品\s*牌)\s*$")
+DEPT_RE = re.compile(r"(?i)项目部|本公司|\bproject\b")
 
 
 SUFFIX = re.compile(r"[\w\s.,&()（）'-]{0,45}?(?:co\.?\s*,?\s*ltd\.?|limited|corp(?:oration)?\.?(?:\s*,?\s*ltd\.?)?|sdn\.?\s*bhd\.?|有限责任公司|有限公司|集团公司)", re.I)
@@ -146,6 +163,52 @@ def propose(lines, terms, page_kind="scan"):
                     e_ = len(t)
                 b, rot = sub_box(d, mm.start(), e_)
                 add(b, rot, "Amount", "amount")
+
+    # 6c. amounts in words: English "SAY ... ONLY" (often wraps onto following lines), Chinese 大写
+    for d in lines:
+        t = d["t"]
+        if is_vertical(d):
+            continue
+        m = WORDS_START.search(t)
+        if m and (re.search(r"(?i)\bsay\b", t) or WORDS_NUM.search(t)) and not re.search(r"(?i)unit\s*[:：]", t):
+            mo = re.search(r"(?i)\bonly\b\s*[)）]?", t[m.start():])
+            b, rot = sub_box(d, m.start(), m.start() + mo.end() if mo else len(t)); add(b, rot, "Amount in words", "amtwords")
+            if not mo:  # continuation lines directly below, overlapping horizontally, up to "... ONLY"
+                y = d["y"] + d["h"]
+                for d2 in sorted(lines, key=lambda q: q["y"]):
+                    if d2 is d or d2["y"] < y - d["h"] * 0.3 or d2["y"] > y + d["h"] * 1.2:
+                        continue
+                    if min(d2["x"] + d2["w"], d["x"] + d["w"]) - max(d2["x"], d["x"]) <= 0:
+                        continue
+                    if not re.fullmatch(r"(?i)[\sA-Z,\-.]*", d2["t"]) or not re.search(r"(?i)only|" + NUMW, d2["t"]):
+                        break
+                    b2, rot2 = line_box(d2); add(b2, rot2, "Amount in words", "amtwords")
+                    y = d2["y"] + d2["h"]
+                    if re.search(r"(?i)only", d2["t"]):
+                        break
+        mc = CN_WORDS.search(t)
+        if mc:
+            b, rot = sub_box(d, mc.start(), mc.end()); add(b, rot, "Amount in words", "amtwords")
+
+    # 6d. invoice numbers embedding a counterparty code (ABC-XYZ-P-001, XYZ2022-01) -> whole number
+    for d in lines:
+        m = INVNO_RE.search(d["t"])
+        if not m:
+            continue
+        segs = [x for x in re.split(r"[-–•·:/_.\s]+", m.group(1)) if x]
+        if any(re.match(r"[A-Za-z]{3,}", x) and not OWN_CODE.fullmatch(x) and not OWN.search(x) for x in segs):
+            b, rot = sub_box(d, m.start(1), m.end(1)); add(b, rot, "Invoice No. (contains supplier abbreviation)", "invno")
+
+    # 6e. remarks / manufacturer columns of purchase-order item lists often name the manufacturer
+    if any(re.search(r"(?i)采购订单|订单清单|purchase\s*order", d["t"]) for d in lines):
+        for h in lines:
+            if not REMARK_HDR.match(h["t"]) or is_vertical(h):
+                continue
+            x0, x1 = h["x"] - 0.03, h["x"] + h["w"] + 0.03
+            for d in lines:
+                if (x0 <= d["x"] + d["w"] / 2 <= x1 and d["y"] > h["y"] + h["h"] * 0.5 and d["w"] < 0.25
+                        and re.search(r"[\u4e00-\u9fffA-Za-z]{2,}", d["t"]) and not DEPT_RE.search(d["t"]) and not OWN.search(d["t"])):
+                    b, rot = line_box(d); add(b, rot, "Manufacturer names", "remark")
 
     # 6a. signature fields: keyword line with nothing (or only a few chars) after it -> area to its right
     for d in lines:

@@ -9,7 +9,8 @@ information, so third-party identity and negotiated terms are bracketed.
 | Item | Treatment | Public label |
 |---|---|---|
 | Supplier / contractor / forwarder / consultant name, abbreviation, logo, letterhead, address, phone, fax, e-mail, website, registration no. | bracket every occurrence (body text too: "the Supplier XYZ shall…" → "[Supplier] shall…") | Supplier name / Supplier name and address / Supplier logo / Third-party name |
-| Supplier seals incl. cross-page seal fragments; all handwritten signatures and page initials (both parties) | bracket | Seal / Signature / Initials |
+| Supplier seals of any colour, incl. cross-page seal fragments at the page edge; all handwritten signatures and page initials (both parties) | bracket | Supplier seal / Signature / Initials |
+| Manufacturer / vendor names in remarks, brand or manufacturer columns of orders and item lists | bracket | Manufacturer names |
 | Names of individuals (sales staff, legal reps, project managers, approvers, drivers), ID / IC numbers, personal phones | bracket | Name(s) |
 | Bank names + account numbers, SWIFT, tax IDs of the supplier; **the submitter's own account and tax numbers** (privacy rule) | bracket | Bank account / tax ID information |
 | Prices, amounts (figures **and** words), cumulative amounts, totals, provisional sums, rates per day | bracket | Amount / Total contract price |
@@ -43,4 +44,6 @@ H. Third parties other than the main supplier (designers, supervisors, landlords
   their judgement calls and harmonise (e.g. one bracketed an anti-bribery clause, others left it public).
 - Overlay translations (scan + red translated text): the red text is not a seal; but translated text repeating BCI
   is bracketed.
+- Seal colour does not identify the owner; read the seal text (or compare a fragment with the full seal).
+- Amounts in words often wrap onto a second line ("... TEN MILLION" / "ONLY"); the second line is part of the amount.
 - When a box would only cover half a company name or the label words of a field, extend it – partial names leak.

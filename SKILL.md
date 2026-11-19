@@ -71,7 +71,8 @@ bpi.py propose all             # automatic proposals -> _work/auto
 bpi.py sheets KEY              # contact sheets -> _work/sheets/KEY/sheet_###.png (+ index.txt)
 # look at EVERY sheet, write _work/review/KEY.json, re-run sheets until right
 bpi.py build KEY
-bpi.py qa KEY                  # leak check - must end with 0 issues or every hit explained
+bpi.py qa KEY                  # OCR leak check - must end with 0 issues or every hit explained
+bpi.py pubsheets KEY           # look at EVERY Public page - catches what OCR cannot read
 bpi.py log                     # BCI log spreadsheet
 ```
 
@@ -93,6 +94,9 @@ between reviewers (the same clause type must get the same treatment everywhere),
 
 ## 6. Quality gates before saying "done"
 
+- `bpi.py pubsheets all` and look at **every** Public page yourself (or have each reviewer do it for their units).
+  OCR-based QA cannot see stamps, seal fragments, faint table columns or overlay totals; the leaks a client finds
+  are almost always of this kind (see "Final visual check" in `references/review-guide.md`).
 - `bpi.py qa all` re-OCRs every Public page. Fix real leaks; for each remaining hit verify it on the rendered page and
   explain it (typical false positives: a bracketed price "240.00" equals a public postcode "24000"; a public title's
   digits contain a bracketed number; a generic equipment name matches a supplier regex).

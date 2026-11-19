@@ -12,6 +12,7 @@ Run from the matter folder (the one holding bpi_config.json):
   python bpi.py sheets KEY [FILE ...]    review contact sheets -> _work/sheets/KEY/sheet_###.png
   python bpi.py lines KEY FILE PAGE [Y0 Y1]   OCR/text lines with boxes (for precise span edits)
   python bpi.py build KEY|all            write BPI + Public PDFs
+  python bpi.py pubsheets KEY|all        4 Public pages per image -> _work/pub/KEY/ (visual leak review)
   python bpi.py qa KEY|all               re-OCR Public PDFs and look for leaked bracketed content
   python bpi.py log [KEY ...]            BCI log spreadsheet (one row per bracket)
   python bpi.py status                   which units are proposed / reviewed / built / stale
@@ -26,7 +27,8 @@ import cfg as C
 
 COLORS = {"term": (0.9, 0, 0), "bank": (0, 0, 0.9), "contact": (0, 0.55, 0.9), "person": (0.6, 0, 0.6),
           "pay": (0.9, 0.5, 0), "ld": (0.9, 0.5, 0), "amount": (0, 0.6, 0), "table": (0, 0.6, 0),
-          "seal-red": (1, 0, 0.5), "seal-blue?": (0.3, 0.3, 1), "hand?": (1, 0.6, 0), "sigfield": (0.5, 0.3, 0),
+          "seal-red": (1, 0, 0.5), "seal-blue?": (0.3, 0.3, 1), "seal-sup": (1, 0, 0.5), "seal-edge?": (1, 0, 0.5),
+          "amtwords": (0, 0.6, 0), "invno": (0.9, 0, 0), "remark": (0.9, 0, 0), "hand?": (1, 0.6, 0), "sigfield": (0.5, 0.3, 0),
           "manual": (0, 0, 0)}
 NOSNAP = ("Signature", "Seal", "Supplier logo", "Initials", "Names")
 
@@ -186,12 +188,28 @@ def cmd_parties(args):
 
 
 # =========================================================================== propose
+def seal_kind(b, lines, terms, col, own_seal):
+    """Seal colour says nothing about who owns a seal. A seal is proposed as a supplier seal when its OCR text
+    matches a supplier term (seal-sup), or when it is a red fragment cut by the page edge, i.e. a cross-page
+    seal (seal-edge?). Blue edge fragments are left to the visual review (often the submitter's own seal)."""
+    ins = [d for d in lines if b[0] <= d["x"] + d["w"] / 2 <= b[2] and b[1] <= d["y"] + d["h"] / 2 <= b[3]]
+    txt = " ".join(d["t"] for d in ins)
+    if txt and own_seal.search(txt):
+        return None
+    if txt and any(re.search(p, txt) for p, _ in terms):
+        return "seal-sup"
+    if col == "red" and (b[0] < 0.015 or b[2] > 0.985) and (b[2] - b[0]) < 0.12 and (b[3] - b[1]) > 0.04:
+        return "seal-edge?"
+    return None
+
+
 def cmd_propose(args):
     from compat import fitz
     import propose as P
     import seals
     cfg = C.Cfg()
-    P.set_own(cfg["own_company_regex"])
+    P.set_own(cfg["own_company_regex"], cfg["own_code_regex"])
+    own_seal = re.compile(cfg["own_seal_text_regex"] + "|" + cfg["own_company_regex"], re.I)
     for key in keys_arg(cfg, args):
         key, folder = cfg.unit(key)
         terms = cfg.terms(key)
@@ -211,6 +229,11 @@ def cmd_propose(args):
                         props.append({"r": [round(v, 4) for v in b], "label": "Signature", "rot": 0, "src": "hand?"})
                     for b in seals.color_boxes(page, "blue"):
                         props.append({"r": [round(v, 4) for v in b[:4]], "label": "Seal", "rot": 0, "src": "seal-blue?"})
+                    for col in ("blue", "red"):
+                        for b in seals.color_boxes(page, col):
+                            k = seal_kind(b, lines, terms, col, own_seal)
+                            if k:
+                                props.append({"r": [round(v, 4) for v in b[:4]], "label": "Supplier seal", "rot": 0, "src": k})
                 spec["pages"][str(i + 1)] = props
             ap = auto_path(cfg, folder, f)
             ap.parent.mkdir(parents=True, exist_ok=True)
@@ -455,6 +478,36 @@ def cmd_build(args):
             print("built", key, out, sum(len(v) for v in regs.values()), "brackets")
 
 
+def cmd_pubsheets(args):
+    """4 built Public pages per image at readable size, for the visual leak review -> work/pub/KEY/"""
+    from compat import fitz
+    cfg = C.Cfg()
+    for key in keys_arg(cfg, args):
+        key, folder = cfg.unit(key)
+        od = cfg.work / "pub" / key
+        shutil.rmtree(od, ignore_errors=True); od.mkdir(parents=True, exist_ok=True)
+        pages = []
+        for f, path, mode, out in C.files(cfg, folder):
+            p = cfg.out_dir(cfg.out_pub, folder) / out
+            if not p.exists():
+                continue
+            for i, pg in enumerate(fitz.open(str(p))):
+                pages.append((f"{out} p{i + 1}", pg.get_pixmap(dpi=72)))
+        idx = []
+        for s in range(0, len(pages), 4):
+            sd = fitz.open(); sp = sd.new_page(width=1200, height=1720)
+            for k, (lab, pm) in enumerate(pages[s:s + 4]):
+                x = (k % 2) * 600; y = (k // 2) * 860
+                sp.insert_image(fitz.Rect(x, y + 14, x + 600, y + 860), pixmap=pm, keep_proportion=True)
+                sp.insert_text((x + 4, y + 11), lab, fontsize=11, color=(1, 0, 0), fontname="hebo")
+                sp.draw_rect(fitz.Rect(x, y, x + 600, y + 860), color=(0.5, 0.5, 0.5))
+            fn = od / f"pub_{s // 4 + 1:03d}.png"
+            sp.get_pixmap(dpi=72).save(str(fn))
+            idx.append(f"{fn.name}  " + " | ".join(l for l, _ in pages[s:s + 4]))
+        (od / "index.txt").write_text("\n".join(idx), encoding="utf-8")
+        print("pub sheets", od, len(idx))
+
+
 def cmd_qa(args):
     """Leak check: OCR every Public page and search for (a) supplier terms and (b) 5+ digit numbers that
     were inside a bracket in the source. Also checks page counts and headers. Hits need human judgement:
@@ -566,7 +619,7 @@ def cmd_status(_):
 
 
 CMDS = {"init": cmd_init, "doctor": cmd_doctor, "survey": cmd_survey, "ocr": cmd_ocr, "parties": cmd_parties,
-        "propose": cmd_propose, "sheets": cmd_sheets, "lines": cmd_lines, "build": cmd_build, "qa": cmd_qa,
+        "propose": cmd_propose, "sheets": cmd_sheets, "lines": cmd_lines, "build": cmd_build, "pubsheets": cmd_pubsheets, "qa": cmd_qa,
         "log": cmd_log, "status": cmd_status}
 
 if __name__ == "__main__":

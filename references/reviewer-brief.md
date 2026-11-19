@@ -22,7 +22,8 @@ For each unit:
 3. Re-run sheets until correct; no WARN lines.
 4. `bpi.py build KEY`, then `bpi.py qa KEY` until 0 issues or every remaining hit is verified as a false positive
    on the rendered page. Long builds: use a long timeout or run in background.
-5. Spot-check a few Public pages yourself.
+5. `bpi.py pubsheets KEY` and look at EVERY Public page (not a sample) – stamps, seal fragments at the page
+   edges, remarks columns, wrapped amounts in words and overlay totals are what OCR-based QA misses.
 
 Do not edit `<skill>/scripts`, `_work/terms.json`, `_work/rules.md`, other units' files or the source folder; do not
 delete anything. Put helper scripts in your own sub-folder of `_work/reviewers/<your name>/`.

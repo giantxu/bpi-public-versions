@@ -24,6 +24,8 @@ DEFAULTS = {
     # regex matching text that belongs to the submitting company itself (its name, address, phone,
     # own account numbers). Lines matching it are not treated as supplier contact info.
     "own_company_regex": "(?!x)x",
+    "own_code_regex": "(?!x)x",
+    "own_seal_text_regex": "(?!x)x",
     # colour of the submitting company's own seal ("blue" / "red" / ""), used only for review hints
     "own_seal_color": "",
     "dpi": 200,

@@ -9,8 +9,10 @@ ticks – then let `snap`/`span` make them exact.
 
 Box colours (proposal `src`):
 red `term` supplier term · blue `bank` · light blue `contact` · purple `person` · orange `pay`/`ld` clause ·
-green `amount`/`table` · pink `seal-red` · violet `seal-blue?` · yellow-orange `hand?` handwriting candidate ·
-brown `sigfield` signature field · black `manual` (your additions).
+green `amount`/`table`/`amtwords` (amount in words) · pink `seal-red`, `seal-sup` (seal whose text matches a supplier
+term), `seal-edge?` (red cross-page seal fragment at the page edge) · violet `seal-blue?` · red `invno` (invoice number
+containing a counterparty code), `remark` (purchase-order remarks naming a manufacturer) · yellow-orange `hand?`
+handwriting candidate · brown `sigfield` signature field · black `manual` (your additions).
 
 ## Edit file `_work/review/KEY.json`
 
@@ -53,7 +55,17 @@ dropped.
 1. **Missing**: supplier names in running text, letterhead addresses without a "Tel/Address" keyword, logos,
    amounts written in words, payment clauses (bracket whole clause, both languages), price columns on pages that
    continue a table without its header, signatures (handwriting detection misses faint ones), page initials at the
-   bottom corners, seals of Malaysian/foreign subsidiaries that are blue, names in approval screenshots.
+   bottom corners, names in approval screenshots, and – the misses most often found later by the client:
+   - amounts in words that wrap onto a second line ("SAY IN CHINA YUAN TEN MILLION" / "ONLY") – bracket every line;
+   - invoice / document numbers embedding the supplier's code ("ABC-XYZ-P-003", "XYZ2022-01") – whole number;
+   - remarks / manufacturer / brand columns of purchase-order item lists naming makers or vendors (OCR often
+     misses these columns – check them by eye on every item-list page);
+   - supplier seals that are not red: **seal colour says nothing about the owner** (e.g. a supplier's foreign
+     subsidiary using a blue seal). Identify every seal and every cross-page seal fragment at the page edge by its
+     text, comparing a fragment with the complete seal elsewhere in the document; only the submitter's own seal
+     stays public;
+   - totals in red overlay translations, supplier stamps with tax numbers at a page foot, and the first letters
+     of a name left just outside a bracket ("Supplier: TA[").
 2. **False**: `hand?` boxes on two-column text, drawings, punch holes, scan edges; `seal-red` on red translation
    overlays; `seal-blue?` on the submitter's own cross-page seal; `sigfield` boxes over empty signature fields;
    `person` boxes on "(Signature and stamp)" captions; `amount` on capacities ("30万吨", "2.7 Million tons").
@@ -61,6 +73,13 @@ dropped.
    box starting after "No. 33,"; a clause box ending one line early. Partial = leak.
 4. **Label quality**: the public label must say what was removed. Merge related items into one block with a
    composed label rather than a dozen tiny boxes.
+
+## Final visual check of the Public PDFs
+
+The OCR-based `qa` misses what OCR cannot read (stamps, faint tables, seal fragments, low-quality scans). Before
+delivery run `bpi.py pubsheets KEY` and look at **every** Public page (4 per image; zoom with a page render where
+in doubt). Treat any visible supplier identity, price, quantity, amount, account / tax number, personal name,
+signature or payment / penalty term as a leak, fix it in the review file, rebuild and re-check.
 
 ## Reading QA hits
 
