@@ -64,6 +64,9 @@ dropped.
      subsidiary using a blue seal). Identify every seal and every cross-page seal fragment at the page edge by its
      text, comparing a fragment with the complete seal elsewhere in the document; only the submitter's own seal
      stays public;
+   - QR codes and barcodes: decode them (any phone camera). A code whose content is not printed in clear on the
+     page – e.g. an e-invoice QR linking to the full invoice on a tax portal – is bracketed ("QR code (encodes
+     e-invoice details)"); a code that only repeats a public printed number may stay;
    - totals in red overlay translations, supplier stamps with tax numbers at a page foot, and the first letters
      of a name left just outside a bracket ("Supplier: TA[").
 2. **False**: `hand?` boxes on two-column text, drawings, punch holes, scan edges; `seal-red` on red translation

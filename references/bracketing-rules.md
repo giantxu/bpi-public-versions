@@ -10,6 +10,7 @@ information, so third-party identity and negotiated terms are bracketed.
 |---|---|---|
 | Supplier / contractor / forwarder / consultant name, abbreviation, logo, letterhead, address, phone, fax, e-mail, website, registration no. | bracket every occurrence (body text too: "the Supplier XYZ shall…" → "[Supplier] shall…") | Supplier name / Supplier name and address / Supplier logo / Third-party name |
 | Supplier seals of any colour, incl. cross-page seal fragments at the page edge; all handwritten signatures and page initials (both parties) | bracket | Supplier seal / Signature / Initials |
+| QR codes / barcodes whose content reveals bracketed information or links to the full document (e-invoice QR) | bracket | QR code (encodes e-invoice details) |
 | Manufacturer / vendor names in remarks, brand or manufacturer columns of orders and item lists | bracket | Manufacturer names |
 | Names of individuals (sales staff, legal reps, project managers, approvers, drivers), ID / IC numbers, personal phones | bracket | Name(s) |
 | Bank names + account numbers, SWIFT, tax IDs of the supplier; **the submitter's own account and tax numbers** (privacy rule) | bracket | Bank account / tax ID information |
