@@ -92,8 +92,9 @@ def set_own(regex, code_regex=None):
     if code_regex:
         OWN_CODE = re.compile(code_regex, re.I)
 NUM = r"\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+NOT_DATE = r"(?!\d|\s*[-/年]\s*\d)"
 AMOUNT_RES = [
-    re.compile(r"(?:¥|￥|RMB|CNY|USD|US\$|RM|MYR|\$)\s*[:：]?\s*(?:" + NUM + r")(?:\s*(?:元|万元|yuan))?", re.I),
+    re.compile(r"(?:¥|￥|RMB|CNY|USD|US\$|RM|MYR|\$)\s*[:：]?\s*(?:" + NUM + r")" + NOT_DATE + r"(?:\s*(?:元|万元|yuan))?", re.I),
     re.compile(r"(?:" + NUM + r")\s*(?:万美元|万元|美元|元|yuan|RMB|CNY|USD|US\s*dollars?|dollars?|ringgit|RM)", re.I),
     re.compile(r"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整]{4,}"),
     re.compile(r"(?i)(?:ringgit malaysia|say\s*(?:us\s*dollars|rmb|renminbi|usd))[A-Z \-]+only"),
@@ -102,8 +103,13 @@ AMOUNT_RES = [
 BANK_RE = re.compile(r"(?i)账\s*号|帐\s*号|account\s*(?:no|number|name)?|a/c|swift|iban|税\s*号|纳税人识别号|统一社会信用代码|tax\s*(?:no|id|registration)|gst\s*id|sst|开户(?:行|银行)|银行|bank|行号|routing|beneficiary")
 CONTACT_RE = re.compile(r"(?i)\btel\b|电\s*话|\bfax\b|传\s*真|e-?mail|邮\s*箱|手\s*机|mobile|phone|联系人|contact\s*person|地\s*址|address|邮\s*编|post\s*code|zip")
 PERSON_RE = re.compile(r"(?i)法定代表人|委托代理人|授权代表|代表人|负责人|经办人|联系人|项目经理|工程师代表|工程师|现场代表|安全员|监理|engineer|supervisor|site\s*(?:manager|representative)|safety\s*officer|签\s*字|签\s*名|signature|signed\s*by|legal\s*(?:person|representative)|authori[sz]ed\s*(?:agent|representative|signatory)|entrusted\s*agent|salesman|attn|prepared\s*by|approved\s*by|checked\s*by|manager")
-PAY_RE = re.compile(r"(?i)付款|支付|预付|进度款|结算款|尾款|质保金|保证金|保修金|履约|定金|货款|payment|advance|retention|warranty\s*(?:bond|money|deposit)|deposit|instal(?:l)?ment|balance")
-LD_RE = re.compile(r"(?i)违约金|扣罚|罚款|赔偿.*%|liquidated|penalt")
+PAY_RE = re.compile(r"(?i)付款|支付|预付|进度款|结算款|结算方式|票结算|尾款|质保金|保证金|保修金|履约|定金|货款|电汇|信用证|承兑|payment|advance|retention|warranty\s*(?:bond|money|deposit)|deposit|instal(?:l)?ment|balance|settle(?:d|ment)\s*(?:by|via|through|in\s*full)|telegraphic\s*transfer|\bT\s*/\s*T\b|\bL\s*/\s*C\b|letter\s*of\s*credit")
+LD_RE = re.compile(r"(?i)违[约的]金|扣罚|罚款|赔偿.*%|延期|逾期|迟延|拖延|拖期|误期|liquidated|penalt|late\s*delivery|delay(?:ed|s)?\b|per\s*day|each\s*day|per\s*week")
+# a payment clause introduced by its heading ("付款方式：…", "Terms of payment: …") is negotiated even without a percentage
+PAY_LBL = re.compile(r"(?i)^\s*(?:(?:第?[\d一二三四五六七八九十]+[条.、)）]?)\s*)?(?:付款方式|付款条件|付款办法|结算方式|支付方式|payment\s*(?:terms?|method|conditions?)|terms?\s*of\s*payment)\s*[:：]\s*\S")
+# a total / contract price label: the number on its row is an amount even without a currency sign
+TOTAL_LBL = re.compile(r"(?i)合\s*计|总\s*计|小\s*计|总\s*价|总金额|价税合计|合同(?:总)?(?:价|金额)|\b(?:grand\s*|sub\s*-?\s*)?total\b|contract\s*(?:price|amount|value|sum)")
+BARE_NUM = re.compile(r"(?<![A-Za-z\d.,-])(?:\d{1,3}(?:[,，]\d{3})+|\d{4,})(?:\.\d+)?(?![\d%‰]|\s*[-/年]\s*\d)")
 PCT_RE = re.compile(r"\d+(?:\.\d+)?\s*[%％‰]|百分之|千分之|万分之|[一二三四五六七八九十]成|per\s*cent")
 PRICE_HDR = re.compile(r"(?i)单\s*价|合\s*价|总\s*价|金\s*额|价\s*格|价\s*款|造\s*价|费\s*用|小\s*计|合\s*计|总\s*计|含税|不含税|unit\s*price|amount|total|price|sum|value|subtotal")
 QTY_HDR = re.compile(r"(?i)^(?:数\s*量|工\s*程\s*量|qty\.?|quantity|数量\s*\(.*\)|数量（.*）)$|^数\s*量")
@@ -185,18 +191,37 @@ def propose(lines, terms, page_kind="scan"):
         # 5. payment / LD clauses with percentages or amounts -> whole line
         if PCT_RE.search(t) and LD_RE.search(t):
             b, rot = line_box(d); add(b, rot, "Liquidated damages terms", "ld"); continue
-        if PCT_RE.search(t) and PAY_RE.search(t):
+        if (PCT_RE.search(t) and PAY_RE.search(t)) or PAY_LBL.search(t):
             b, rot = line_box(d); add(b, rot, "Payment terms (percentages and timing)", "pay"); continue
         # 6. amounts inside text
         for rx in AMOUNT_RES:
             for mm in rx.finditer(t):
-                if len(re.sub(r"\D", "", mm.group(0))) == 0 and rx is AMOUNT_RES[0]:
+                nd = len(re.sub(r"\D", "", mm.group(0)))
+                if nd == 0 and rx is AMOUNT_RES[0]:
                     continue
+                if nd == 1 and re.match(r"\s*[:：)）\]]", t[mm.end():]):
+                    continue                      # "合计（CNY2：" - a misread bracket, not an amount
                 e_ = mm.end()
                 if re.fullmatch(r"[A-Za-z \-,]*", t[e_:]) and re.search(r"(?i)only|thousand|hundred|million", t[e_:] + mm.group(0)):
                     e_ = len(t)
                 b, rot = sub_box(d, mm.start(), e_)
                 add(b, rot, "Amount", "amount")
+
+    # 6f. totals: the number in a "Total / 合计 / contract price" row, with or without a currency sign
+    for d in lines:
+        t = d["t"]
+        m = TOTAL_LBL.search(t)
+        if not m or is_vertical(d) or len(t) > 60:
+            continue
+        for mm in BARE_NUM.finditer(t, m.end()):
+            b, rot = sub_box(d, mm.start(), mm.end()); add(b, rot, "Amount", "amount")
+        cy0, cy1 = d["y"] - d["h"] * 0.3, d["y"] + d["h"] * 1.3
+        for d2 in lines:
+            if d2 is d or is_vertical(d2) or d2["x"] < d["x"] + d["w"] * 0.5 or not (cy0 <= d2["y"] + d2["h"] / 2 <= cy1):
+                continue
+            t2 = d2["t"].strip()
+            if len(t2) <= 24 and BARE_NUM.search(t2) and re.fullmatch(r"[\s¥￥$A-Za-z:：|｜()（）]{0,8}[\d,，.]+[\s|｜元)）]*", t2):
+                b, rot = line_box(d2); add(b, rot, "Amount", "amount")
 
     # 6c. amounts in words: English "SAY ... ONLY" (often wraps onto following lines), Chinese 大写
     for d in lines:

@@ -3,8 +3,12 @@
 audit   reads the SOURCE text (OCR cache / text layer) and the final brackets and lists
         - text cut by a bracket edge (half a name or number left visible),
         - sensitive-looking content that no bracket covers (supplier terms, company names, amounts,
-          bank / contact / ID numbers, names after "Legal representative:", payment percentages,
-          invoice numbers with a counterparty code, remarks naming manufacturers, seals, QR codes).
+          bank / contact / ID numbers, names after "Legal representative:", payment and late-delivery
+          clauses, invoice numbers with a counterparty code, remarks naming manufacturers, seals, QR codes),
+        - inconsistencies: a number bracketed on one page and visible on another, a clause bracketed in
+          the original but not in its translation,
+        - over-bracketing: the submitter's own details inside a bracket, one bracket over a third of a
+          page, labels that name nothing confidential.
         Every finding is either fixed in the review file or acknowledged with a written reason.
 gate    PASS / FAIL per unit: clean edit file, fresh build, audit and qa with no open findings,
         Public sheets regenerated after the build and attested as viewed. "Done" means gate PASS.
@@ -15,11 +19,21 @@ from pathlib import Path
 import cfg as C
 import edits as E
 
-MUST = ("term", "company", "cut", "half", "bank", "contact", "person", "pay", "ld", "amount", "amtwords", "invno",
-        "remark", "number", "seal", "code")
+MUST = ("term", "company", "cut", "bank", "contact", "person", "pay", "ld", "amount", "amtwords", "invno",
+        "remark", "number", "same", "pair", "seal", "code", "own", "wide", "label")
 HINT = {
     "cut": "a bracket edge cuts this text - extend the bracket (text / lines / grow edit) so the whole item is inside",
-    "half": "a bracket covers only the upper or lower half of this line - extend it",
+    "same": "this number is inside a bracket elsewhere in the unit - bracket it here too (or remove the other bracket if it is public)",
+    "pair": "an original and its translation must be bracketed alike - bracket the same clause in this file",
+    "pay": "a payment clause is not inside any bracket (bracket the whole clause, in every language version)",
+    "ld": "a late-delivery / liquidated-damages clause is not inside any bracket (whole clause, every language version)",
+    "amount": "an amount / total is not inside any bracket",
+    "own": "over-bracketing: the submitter's own name, address, logo and seal are public - shrink the bracket or split it "
+           "so that only the confidential part is inside (its own account numbers stay bracketed)",
+    "wide": "over-bracketing: bracket only the confidential columns / lines (table: {\"table\": ...}; clause: {\"span\": ...}); "
+            "headings, item names, specifications and the submitter's own details stay public. Never enlarge a bracket "
+            "to make other findings disappear",
+    "label": "over-bracketing: scan edges, punch holes, blank fields and the submitter's own logo are not confidential",
     "term": "a supplier term is not inside any bracket",
     "company": "a company name that is not the submitter's is not inside any bracket",
     "number": "a long number (account, phone, ID ...) is not inside any bracket",
@@ -129,13 +143,121 @@ def page_codes(cfg, folder, f, path, npages, compute=True):
 
 
 # --------------------------------------------------------------------------- audit
+NUMTOK = re.compile(r"(?<![A-Za-z\d])\d[\d,，]*(?:\.\d+)?")
+PICT = re.compile(r"(?i)signature|initial|seal|stamp|chop|logo|handwrit")
+THEIRS = re.compile(r"(?i)supplier|seller|vendor|contractor|manufacturer|third|counterpart")
+BADLABEL = re.compile(r"(?i)scan\s*edge|page\s*edge|punch|\bholes?\b|\bblank\b|\bempty\b|noise|artefact|artifact|margin|stain|shadow|"
+                      r"\b(?:buyer|purchaser|importer|own|submitter)(?:'s)?\s+(?:logo|name|address|seal|letterhead)")
+PAIR_SUFFIX = re.compile(r"(?i)[\s_\-]*[(（]?(?:en|eng|english|cn|chinese|中文|英文|译文|翻译|translation|translated)[)）]?$")
+PAIR_CATS = (("Payment terms", re.compile(r"(?i)payment")), ("Liquidated damages terms", re.compile(r"(?i)liquidated|penalt")))
+PAIR_KEY = {"Payment terms": re.compile(r"(?i)付款|支付|payment|settlement"),
+            "Liquidated damages terms": re.compile(r"(?i)违[约的]金|liquidated|penalt|late\s*delivery|延期|逾期|拖延|per\s*day")}
+WIDE, WIDE_PAGE = 0.35, 0.55
+
+
+def _share(rx, t):
+    """share of the letters / digits of `t` that `rx` matches"""
+    n = len(re.findall(r"\w", t))
+    return sum(len(re.findall(r"\w", m.group(0))) for m in rx.finditer(t)) / n if n else 0.0
+
+
+def canon_num(tok):
+    s = tok.replace(",", "").replace("，", "")
+    if "." in s:
+        a, b = s.split(".", 1)
+        s = a + b.rstrip("0")                     # 57600.0000 = 57600 ; 1,234.50 = 1234.5
+    return s.lstrip("0")
+
+
+def num_tokens(t, skip=None):
+    """numbers of 5+ digits in a text line that are not dates, document codes or round figures -> [(canonical, start, end)]"""
+    dates = [m.span() for m in DATE.finditer(t)]
+    out = []
+    for m in NUMTOK.finditer(t):
+        a, b = m.span()
+        if any(a < e and s_ < b for s_, e in dates):
+            continue
+        if re.search(r"[A-Za-z][-–_/.]$|\d[-–/]$", t[:a]) or re.match(r"[-–/]\d|[A-Za-z]{2}", t[b:]):
+            continue                              # part of a document code, a date or a phone number
+        c = canon_num(m.group(0))
+        if len(c) < 5 or (len(c) < 7 and re.fullmatch(r"[1-9]\d?0{3,}", c)):
+            continue                              # short, or a round figure that occurs everywhere
+        if re.fullmatch(r"(?:19|20)\d\d(?:0[1-9]|1[0-2])(?:[0-2]\d|3[01])", c):
+            continue
+        if skip is not None:
+            w0 = t.rfind(" ", 0, a) + 1
+            if skip.search(t[w0:b]):
+                continue
+        out.append((c, a, b))
+    return out
+
+
+def same_number(v, secrets):
+    """the secret that `v` equals (or differs from by at most two misread digits at an end)"""
+    if v in secrets:
+        return v
+    if len(v) >= 6:
+        for s in secrets:
+            if len(s) >= 6 and abs(len(s) - len(v)) <= 2 and (s in v or v in s):
+                return s
+    return None
+
+
+def _boundary(t, i):
+    """is position i (between t[i-1] and t[i]) a word / field boundary?"""
+    if i <= 0 or i >= len(t):
+        return True
+    a, b = t[i - 1], t[i]
+    if not a.isalnum() or not b.isalnum():
+        return True
+
+    def cls(c):
+        return "d" if c.isdigit() else ("c" if "一" <= c <= "鿿" else "l")
+    return cls(a) != cls(b)
+
+
+def unit_pages_spec(cfg, key, folder):
+    """every page of the unit with its final brackets and text lines"""
+    res, notes = [], []
+    for f, path, mode, out in C.files(cfg, folder):
+        if not E.auto_path(cfg, folder, f).exists():
+            notes.append(f"{f}: no proposals yet (run propose)"); continue
+        spec = E.final_spec(cfg, key, folder, f, quiet=True)
+        auto = json.loads(E.auto_path(cfg, folder, f).read_text(encoding="utf-8"))
+        for pg in sorted(spec["pages"], key=int):
+            res.append({"f": f, "out": out, "path": path, "mode": mode, "pg": pg, "regs": spec["pages"][pg],
+                        "lines": E.lines_cached(cfg, folder, f, spec, int(pg)), "auto": auto["pages"].get(pg, []),
+                        "n": len(spec["pages"])})
+    return res, notes
+
+
+def unit_secrets(pages, own_code):
+    """numbers lying inside a bracket somewhere in the unit -> {canonical: (file, page)}"""
+    import propose as P
+    sec = {}
+    for p in pages:
+        regs = [q for q in p["regs"] if not PICT.search(q["label"])]   # a signature / seal box covers text only by accident
+        if not regs:
+            continue
+        for d in p["lines"]:
+            if cover([d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]], regs) <= 0:
+                continue
+            for c, a, b in num_tokens(d["t"], own_code):
+                bx, _ = P.sub_box(d, a, b)
+                if cover(bx, regs) >= 0.8:
+                    sec.setdefault(c, (p["out"], p["pg"]))
+    return sec
+
+
 def audit_unit(cfg, key, folder, only=None, codes=True):
     """-> (items, notes). item = {id, kind, file, out, page, r, text, tier}"""
     import propose as P
     P.set_own(cfg["own_company_regex"], cfg["own_code_regex"])
     own, own_code = cfg.own_re, C.rx_join(cfg["own_code_regex"])
+    own_seal = C.rx_join(cfg["own_seal_text_regex"])
     terms = cfg.terms(key)
-    items, notes, seen = [], [], set()
+    term_rx = [re.compile(p) for p, _ in terms]
+    items, seen = [], set()
     nocodes = False
 
     def add(kind, f, out, pg, r, text, tier="must"):
@@ -144,94 +266,167 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
             return
         seen.add(i)
         items.append({"id": i, "kind": kind, "file": f, "out": out, "page": int(pg), "r": [round(v, 3) for v in r],
-                      "text": text.strip()[:110], "tier": tier})
+                      "text": text.strip()[:150], "tier": tier})
 
-    for f, path, mode, out in C.files(cfg, folder):
+    pages, notes = unit_pages_spec(cfg, key, folder)
+    secrets = unit_secrets(pages, own_code)
+    cds_by = {}
+    for p in pages:
+        f, out, pg, regs, lines, mode = p["f"], p["out"], p["pg"], p["regs"], p["lines"], p["mode"]
         if only and f not in only:
             continue
-        if not E.auto_path(cfg, folder, f).exists():
-            notes.append(f"{f}: no proposals yet (run propose)"); continue
-        spec = E.final_spec(cfg, key, folder, f, quiet=True)
-        auto = json.loads(E.auto_path(cfg, folder, f).read_text(encoding="utf-8"))
-        cds = page_codes(cfg, folder, f, path, len(spec["pages"]), compute=codes is True) if codes else {}
-        if cds is None:
-            nocodes, cds = True, {}
-        for pg in sorted(spec["pages"], key=int):
-            regs = spec["pages"][pg]
-            lines = E.lines_cached(cfg, folder, f, spec, int(pg))
-            # 1. text cut by a bracket edge
-            for d in lines:
-                t = d["t"]
-                if len(t.strip()) < 3 or own.search(t):
-                    continue                      # the submitter's own details may be visible
-                x0, y0, x1, y1 = d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]
-                vert = P.is_vertical(d)
-                for q in regs:
-                    r = q["r"]
-                    along = (min(y1, r[3]) - max(y0, r[1])) / max(1e-6, d["h"]) if vert else (min(x1, r[2]) - max(x0, r[0])) / max(1e-6, d["w"])
-                    across = (min(x1, r[2]) - max(x0, r[0])) / max(1e-6, d["w"]) if vert else (min(y1, r[3]) - max(y0, r[1])) / max(1e-6, d["h"])
-                    if along <= 0 or across <= 0:
-                        continue
-                    if across >= 0.6 and 0.06 < along < 0.94:
-                        n = len(t)
-                        a, b = P.char_span(d, r)
-                        vis = t[:a] + t[b:]
-                        if len(re.findall(r"[0-9A-Za-z\u4e00-\u9fff]", vis)) < 2 or not re.search(r"[0-9A-Za-z\u4e00-\u9fff]", t[a:b]):
-                            continue
-                        sep = r"[\s:：,，;；、。.()（）\[\]/|]"
-                        cut_l = 0 < a < n and not re.match(sep, t[a - 1]) and not re.match(sep, t[a])
-                        cut_r = 0 < b < n and not re.match(sep, t[b - 1]) and not re.match(sep, t[b])
-                        if (cut_l or cut_r) and cover([x0, y0, x1, y1], [o for o in regs if o is not q]) < 0.3:
-                            add("cut", f, out, pg, [x0, y0, x1, y1], f"{t[:a]}⟦{t[a:b]}⟧{t[b:]}   (⟦ ⟧ = inside '{q['label'][:28]}')")
-                    elif along >= 0.5 and 0.25 < across < 0.6 and not vert and cover([x0, y0, x1, y1], regs) < 0.6 \
-                            and len(re.findall(r"[0-9A-Za-z\u4e00-\u9fff]", t)) >= 6:
-                        add("half", f, out, pg, [x0, y0, x1, y1], t)
-            # 2. automatic text proposals that ended up outside every bracket
-            for q in P.propose(lines, terms, mode):
-                if q["src"] in ("term", "bank", "contact", "person", "pay", "ld", "amount", "amtwords", "invno", "remark") \
-                        and cover(q["r"], regs) < 0.6:
-                    add(q["src"], f, out, pg, q["r"], _inside_text(lines, q["r"]) or q["label"])
-            # 3. company names, long numbers, e-mail / web addresses
-            for d in lines:
-                t = d["t"]
-                if own.search(t):
-                    continue
-                m = COMPANY.search(t)
-                if m and len(t) < 90:
-                    b, _ = P.sub_box(d, max(0, m.start() - 6), m.end())
-                    if cover(b, regs) < 0.6:
-                        add("company", f, out, pg, b, t)
-                for m in list(LONGNUM.finditer(t)) + list(EMAIL.finditer(t)):
-                    tok = m.group(0)
-                    plain = "@" not in tok and not re.search(r"[A-Za-z]", tok)
-                    if plain and len(re.sub(r"\D", "", DATE.sub("", tok))) < 9:
-                        continue                      # dates and short numbers are not account / phone / ID numbers
-                    if plain and re.search(r"[A-Za-z][-–_/.]?$", t[:m.start()]):
-                        continue                      # part of a document code (INV-2023-..., P2404...), not a number
-                    s0 = t.rfind(" ", 0, m.start()) + 1
-                    word = t[s0:m.end()]
-                    if own_code.search(word) or own.search(word):
-                        continue
-                    b, _ = P.sub_box(d, m.start(), m.end())
-                    if cover(b, regs) < 0.6:
-                        add("number" if plain else "contact", f, out, pg, b, t)
-            # 4. seals proposed automatically but not bracketed; handwriting candidates (information only)
-            for q in auto["pages"].get(pg, []):
+        if f not in cds_by:
+            cds = page_codes(cfg, folder, f, p["path"], p["n"], compute=codes is True) if codes else {}
+            if cds is None:
+                nocodes, cds = True, {}
+            cds_by[f] = cds
+        # 1. text cut by a bracket edge
+        for d in lines:
+            t = d["t"]
+            if len(t.strip()) < 3 or own.search(t):
+                continue                      # the submitter's own details may be visible
+            x0, y0, x1, y1 = d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]
+            vert = P.is_vertical(d)
+            for q in regs:
                 r = q["r"]
-                if q["src"] in ("seal-red", "seal-sup", "seal-edge?") and cover(r, regs) < 0.6:
-                    if q["src"] == "seal-red" and _red_text(r, lines):
-                        continue                      # red text (e.g. an overlay translation), not a seal
-                    add("seal", f, out, pg, r, f"{q['src']} {_inside_text(lines, r)}")
-                elif q["src"] == "hand?" and cover(r, regs) < 0.5:
-                    add("hand", f, out, pg, r, "handwriting candidate not bracketed", tier="info")
-            # 5. QR codes / barcodes
-            for c in cds.get(int(pg), []):
-                if cover(c["r"], regs) < 0.6:
-                    add("code", f, out, pg, c["r"], f"{c['s']}: {c['t'][:70]}")
+                along = (min(y1, r[3]) - max(y0, r[1])) / max(1e-6, d["h"]) if vert else (min(x1, r[2]) - max(x0, r[0])) / max(1e-6, d["w"])
+                across = (min(x1, r[2]) - max(x0, r[0])) / max(1e-6, d["w"]) if vert else (min(y1, r[3]) - max(y0, r[1])) / max(1e-6, d["h"])
+                if along <= 0 or across <= 0:
+                    continue
+                if across >= 0.6 and 0.06 < along < 0.94:
+                    if PICT.search(q["label"]):
+                        continue                  # a signature / seal box lies over the text by nature
+                    n = len(t)
+                    a, b = P.char_span(d, r)
+                    vis = t[:a] + t[b:]
+                    if len(re.findall(r"[0-9A-Za-z一-鿿]", vis)) < 2 or not re.search(r"[0-9A-Za-z一-鿿]", t[a:b]):
+                        continue
+                    # a block spanning many rows (a table column, a clause) ends at a column / field edge: the
+                    # estimated character position is only a cut when no boundary lies near it
+                    tall = ((r[2] - r[0]) if vert else (r[3] - r[1])) >= 4 * (d["w"] if vert else d["h"])
+                    tol = 2 if tall else 0
+
+                    def is_cut(i):
+                        return 0 < i < n and not any(_boundary(t, j) for j in range(i - tol, i + tol + 1))
+                    if (is_cut(a) or is_cut(b)) and cover([x0, y0, x1, y1], [o for o in regs if o is not q]) < 0.3:
+                        add("cut", f, out, pg, [x0, y0, x1, y1], f"{t[:a]}⟦{t[a:b]}⟧{t[b:]}   (⟦ ⟧ = inside '{q['label'][:28]}')")
+                elif along >= 0.5 and 0.3 < across < 0.6 and not vert and not PICT.search(q["label"]) \
+                        and cover([x0, y0, x1, y1], regs) < 0.6 and len(re.findall(r"[0-9A-Za-z一-鿿]", t)) >= 6:
+                    add("half", f, out, pg, [x0, y0, x1, y1], t, tier="info")
+        # 2. automatic text proposals that ended up outside every bracket
+        reported = []
+        for q in P.propose(lines, terms, mode):
+            if q["src"] in ("term", "bank", "contact", "person", "pay", "ld", "amount", "amtwords", "invno", "remark") \
+                    and cover(q["r"], regs) < 0.6:
+                add(q["src"], f, out, pg, q["r"], _inside_text(lines, q["r"]) or q["label"])
+                reported.append({"r": q["r"]})
+        # 3. company names, long numbers, e-mail / web addresses, numbers bracketed elsewhere in the unit
+        for d in lines:
+            t = d["t"]
+            for c, a, b in num_tokens(t, own_code):
+                s_ = same_number(c, secrets)
+                if not s_:
+                    continue
+                bx, _ = P.sub_box(d, a, b)
+                if cover(bx, regs) < 0.3 and cover([d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]], regs) < 0.3 \
+                        and cover(bx, reported) < 0.5:
+                    sf, sp = secrets[s_]
+                    add("same", f, out, pg, bx, f"{t[:70]}   (the number {t[a:b]} is bracketed in {sf} p{sp} but visible here)")
+            if own.search(t):
+                continue
+            m = COMPANY.search(t)
+            if m and len(t) < 90:
+                b, _ = P.sub_box(d, max(0, m.start() - 6), m.end())
+                if cover(b, regs) < 0.6:
+                    add("company", f, out, pg, b, t)
+            for m in list(LONGNUM.finditer(t)) + list(EMAIL.finditer(t)):
+                tok = m.group(0)
+                plain = "@" not in tok and not re.search(r"[A-Za-z]", tok)
+                if plain and len(re.sub(r"\D", "", DATE.sub("", tok))) < 9:
+                    continue                      # dates and short numbers are not account / phone / ID numbers
+                if plain and re.search(r"[A-Za-z][-–_/.]?$", t[:m.start()]):
+                    continue                      # part of a document code (INV-2023-..., P2404...), not a number
+                s0 = t.rfind(" ", 0, m.start()) + 1
+                word = t[s0:m.end()]
+                if own_code.search(word) or own.search(word):
+                    continue
+                b, _ = P.sub_box(d, m.start(), m.end())
+                if cover(b, regs) < 0.6:
+                    add("number" if plain else "contact", f, out, pg, b, t)
+        # 4. seals proposed automatically but not bracketed; handwriting candidates (information only)
+        for q in p["auto"]:
+            r = q["r"]
+            if q["src"] in ("seal-red", "seal-sup", "seal-edge?") and cover(r, regs) < 0.6:
+                if q["src"] == "seal-red" and _red_text(r, lines):
+                    continue                      # red text (e.g. an overlay translation), not a seal
+                add("seal", f, out, pg, r, f"{q['src']} {_inside_text(lines, r)}")
+            elif q["src"] == "hand?" and cover(r, regs) < 0.5:
+                add("hand", f, out, pg, r, "handwriting candidate not bracketed", tier="info")
+        # 5. QR codes / barcodes
+        for c in cds_by[f].get(int(pg), []):
+            if cover(c["r"], regs) < 0.6:
+                add("code", f, out, pg, c["r"], f"{c['s']}: {c['t'][:70]}")
+        # 6. over-bracketing: only confidential items may be bracketed - the submitter's own name and address,
+        #    headings, item descriptions and empty paper stay public
+        for q in regs:
+            r, label = q["r"], q["label"]
+            inside = [d for d in lines if cover([d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]], [q]) >= 0.8]
+            mb = BADLABEL.search(label)
+            if mb:
+                add("label", f, out, pg, r, f"'{mb.group(0)}' in the label '{label[:50]}' is not confidential - remove that bracket")
+            pict = bool(PICT.search(label))
+            theirs = bool(THEIRS.search(label))
+            mine = []
+            for d in inside:
+                t = d["t"].strip()
+                if len(t) < 4 or any(rx.search(t) for rx in term_rx):
+                    continue
+                if pict and theirs and re.search(r"(?i)seal|stamp|chop", label) and _share(own_seal, t) >= 0.6:
+                    mine.append(t)                # "Supplier seal" lying on the submitter's own seal
+                elif not pict and _share(own, t) >= 0.33 and not (P.BANK_RE.search(t) and re.search(r"\d{5,}", t)) \
+                        and not re.search(r"\d[\d \-]{7,}\d", own.sub("", t)) and not COMPANY.search(own.sub("", t)):
+                    mine.append(t)                # a name / address line of the submitter, not a sentence mentioning it
+            if mine:
+                add("own", f, out, pg, r, f"'{label[:40]}' covers the submitter's own details: " + " | ".join(mine)[:90])
+            area = (r[2] - r[0]) * (r[3] - r[1])
+            if area >= WIDE:
+                add("wide", f, out, pg, r, f"one bracket ('{label[:40]}') covers {area * 100:.0f}% of the page and {len(inside)} text lines")
+        total = sum((q["r"][2] - q["r"][0]) * (q["r"][3] - q["r"][1]) for q in regs)
+        if total >= WIDE_PAGE and not any((q["r"][2] - q["r"][0]) * (q["r"][3] - q["r"][1]) >= WIDE for q in regs):
+            add("wide", f, out, pg, [0, 0, 1, 1], f"the brackets on this page cover {total * 100:.0f}% of it in total")
+    # 7. an original and its translation must be bracketed alike
+    groups = {}
+    for p in pages:
+        groups.setdefault(PAIR_SUFFIX.sub("", Path(p["f"]).stem), {}).setdefault(p["f"], []).append(p)
+    for base, fs in groups.items():
+        if len(fs) < 2:
+            continue
+        for name, rx in PAIR_CATS:
+            have = {f: next(((p["pg"], q["label"]) for p in ps for q in p["regs"] if rx.search(q["label"])), None) for f, ps in fs.items()}
+            src = next(((f, v) for f, v in have.items() if v), None)
+            if not src:
+                continue
+            for f, v in have.items():
+                if v is None and (not only or f in only) and any(PAIR_KEY[name].search(d["t"]) for p in fs[f] for d in p["lines"]):
+                    add("pair", f, fs[f][0]["out"], 1, [0, 0, 0, 0],
+                        f"no bracket for {name.lower()} in this file, but {src[0]} p{src[1][0]} has '{src[1][1][:40]}'")
     if nocodes:
         notes.append("QR / barcode detection is not available on this machine (macOS with swiftc, or pip install "
                      "opencv-python-headless) - check codes by eye on the Public sheets")
     return items, notes
+
+
+def rect_share(cfg, key):
+    """(hand-placed rectangles, all additions) in the unit's review file"""
+    n = r = 0
+    for f, pgs in E.load_review(cfg, key).items():
+        if not isinstance(pgs, dict):
+            continue
+        for e in pgs.values():
+            for a in (e.get("add", []) if isinstance(e, dict) else []):
+                n += 1
+                r += "r" in a and not PICT.search(str(a.get("label", "")))
+    return r, n
 
 
 # --------------------------------------------------------------------------- acknowledgements
@@ -273,11 +468,19 @@ def cmd_audit(args):
         for x in sorted(must if show_acked else opened, key=lambda x: (x["file"], x["page"], x["r"][1])):
             st = f"ACK({acks[x['id']]['reason']})" if x["id"] in acks else ""
             print(f"   [{x['id']}] {x['kind']:8s} {x['file']} p{x['page']} @{x['r']}  {x['text']}  {st}")
-        if info and not show_acked:
-            byf = {}
-            for x in info:
-                byf[(x["file"], x["page"])] = byf.get((x["file"], x["page"]), 0) + 1
-            print(f"   info: {len(info)} handwriting candidates are not bracketed on {len(byf)} pages - make sure none is a signature / initials")
+        hand = [x for x in info if x["kind"] == "hand"]
+        half = [x for x in info if x["kind"] == "half"]
+        if hand and not show_acked:
+            byf = {(x["file"], x["page"]) for x in hand}
+            print(f"   info: {len(hand)} handwriting candidates are not bracketed on {len(byf)} pages - make sure none is a signature / initials")
+        if half and not show_acked:
+            print(f"   info: {len(half)} line(s) are half covered by a bracket edge - if the line belongs to the bracketed item, extend the bracket:")
+            for x in half[:8]:
+                print(f"         {x['file']} p{x['page']}: {x['text'][:70]}")
+        rr, rn = rect_share(cfg, key)
+        if rn and rr / rn > 0.5 and rr >= 5:
+            print(f"   info: {rr} of {rn} added brackets over text are hand-placed rectangles (\"r\") - text / after / span / lines / "
+                  f"table follow the text exactly and do not over- or under-cover")
         for nt in notes:
             print("   note:", nt)
         used = {x["kind"] for x in opened}

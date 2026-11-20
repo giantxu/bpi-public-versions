@@ -30,11 +30,19 @@ one visible supplier name or account number is a failed job, however many pages 
    Use rectangles only for what has no text (signatures, seals, logos) and read them off `bpi.py page` (zoomed).
 5. **Check what you wrote before you build:** `bpi.py check KEY`, then `bpi.py boxes KEY FILE PAGE` shows the text
    each bracket really covers.
-6. **Three leak checks, all required, none replaces another:** `audit` (text cut by a bracket edge, sensitive text
-   outside every bracket), `qa` (re-OCR of the Public files), and looking at every Public page yourself.
-7. **Never silence a finding.** Fix it, or `ack` it with the true reason why the item is public. Acknowledged
-   items go into your report.
-8. Commands that write need an explicit unit key (`build 205`, not `build`). Work only on the units you were given.
+6. **Bracket only what is confidential.** Over-bracketing is a defect just like a leak: the submitter's own name,
+   address, logo and seal, headings, item names and specifications, dates and document numbers stay visible. A
+   price table gets a bracket over its quantity / price / amount columns, not over the whole table; a clause gets
+   a bracket over that clause, not over the page.
+7. **Three checks, all required, none replaces another:** `audit` (text cut by a bracket edge, sensitive text
+   outside every bracket, a number or clause bracketed in one place and visible in another, over-bracketing),
+   `qa` (re-OCR of the Public files), and looking at every Public page yourself.
+8. **Never silence a finding.** Fix the cause, or `ack` it with the true reason why the item is public. Never make
+   a finding disappear by drawing a bigger bracket over text that is not confidential – the audit reports that
+   too. Acknowledged items go into your report.
+9. **The same thing gets the same treatment everywhere:** a total bracketed on the item list is bracketed on the
+   cover page; a clause bracketed in the original is bracketed in its translation.
+10. Commands that write need an explicit unit key (`build 205`, not `build`). Work only on the units you were given.
 
 ## 0. Tools
 

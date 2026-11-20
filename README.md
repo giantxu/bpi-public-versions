@@ -30,8 +30,9 @@ why each item is confidential.
 4. **Samples first** – a handful of representative files for user review.
 5. **Unit by unit** – OCR → automatic proposals (supplier terms, amounts, bank lines, price columns, payment and
    penalty clauses, seals, handwriting) → page-by-page review on contact sheets with text-anchored edits → build.
-6. **Three leak checks** – a text audit (text cut by a bracket edge, sensitive text outside every bracket), a
-   re-OCR of every Public page, and a visual check of every Public page. A unit is finished only when
+6. **Three checks** – a text audit (text cut by a bracket edge, sensitive text outside every bracket, a number or
+   clause bracketed in one place and visible in another, over-bracketing of the submitter's own details or of
+   whole pages), a re-OCR of every Public page, and a visual check of every Public page. A unit is finished only when
    `bpi.py gate` prints PASS; findings are fixed or acknowledged with a written reason.
 7. **Report** – outputs, BCI log, gate results, acknowledged findings, judgement calls for confirmation.
 
@@ -66,7 +67,7 @@ python scripts/bpi.py page KEY FILE PAGE        # one page, large, labelled grid
 python scripts/bpi.py lines | boxes KEY FILE [PAGE]   # numbered text lines / what each bracket covers
 python scripts/bpi.py check KEY                 # does the edit file apply cleanly?
 python scripts/bpi.py build KEY [FILE ...]      # BPI + Public PDFs
-python scripts/bpi.py audit KEY                 # text cut by a bracket, sensitive text outside brackets
+python scripts/bpi.py audit KEY                 # leaks, inconsistencies and over-bracketing found in the text
 python scripts/bpi.py qa KEY                    # re-OCR leak check of the Public PDFs
 python scripts/bpi.py ack KEY ID ... -m "why"   # acknowledge a verified non-leak ; acks = list them
 python scripts/bpi.py pubsheets KEY ; viewed KEY N    # visual check of every Public page

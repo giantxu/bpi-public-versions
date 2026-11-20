@@ -100,8 +100,15 @@ are merged and their labels composed; boxes inside a bigger box are dropped.
    `amount` on capacities ("30万吨", "2.7 Million tons").
 3. **Partial**: a box covering "Example Environmental Engineering" but not "Co., Ltd."; an address box starting
    after "No. 33,"; a clause box ending one line early. Partial = leak.
-4. **Label quality**: the public label must say what was removed. One block with a composed label is better than
-   a dozen tiny boxes.
+4. **Too much**: a bracket over the submitter's own name, address, logo or seal (only its account numbers are
+   bracketed); a whole item table instead of its quantity / price / amount / remarks columns; a whole page
+   instead of the clause; brackets around scan edges, punch holes or blank fields. Over-bracketing is a defect:
+   the public version must still show what the document is and what it is about.
+5. **Same thing, same treatment**: the total on the cover page and on the item list; the payment and
+   late-delivery clauses in the original and in the translation (an "_EN" file often contains both – check
+   every page of both languages).
+6. **Label quality**: the public label must say what was removed, and only that. One block with a composed label
+   is better than a dozen tiny boxes – as long as everything inside the block is confidential.
 
 ## 4. Proving nothing leaked – three checks, all required
 
@@ -111,7 +118,19 @@ and your brackets and lists
 - `term`, `company`, `bank`, `contact`, `person`, `amount`, `amtwords`, `pay`, `ld`, `invno`, `remark`, `number` –
   sensitive-looking text that no bracket covers (also everything you removed with `delsrc` / `clear` and did not
   re-cover);
-- `seal` – a seal proposal left unbracketed; `code` – an unbracketed QR code / barcode with its decoded content.
+- `same` – a number that is inside a bracket somewhere in the unit and visible here (the contract total on the
+  cover page); `pair` – a payment / late-delivery clause bracketed in the original but not in its translation,
+  or the reverse;
+- `seal` – a seal proposal left unbracketed; `code` – an unbracketed QR code / barcode with its decoded content;
+- over-bracketing: `own` – a bracket covers the submitter's own name / address lines, or a bracket labelled as a
+  supplier's seal lies on the submitter's own seal; `wide` – one bracket covers more than a third of the page
+  (or the brackets of a page more than half of it); `label` – the label names something that is not
+  confidential (scan edge, blank field, buyer logo). Fix these by shrinking or splitting the bracket: a table
+  gets `{"table": …}` over its figure columns, a clause `{"span": …}`. A `wide` finding may be acknowledged
+  only when everything inside really is confidential (a page-long payment schedule).
+Lines listed as "half covered" are information: extend the bracket if the line belongs to the bracketed item.
+**Do not answer a finding by enlarging a bracket over public text** – that trades one defect for another, and
+`own` / `wide` will report it.
 Each finding has an id. Either fix the edit file, or – when you have verified that the item is public (the
 submitter's own data, a generic clause without negotiated figures, a tariff code, a header word) – acknowledge it
 with the reason:
@@ -121,7 +140,8 @@ Never acknowledge to make a number go down: acknowledged items are listed for th
 The audit only sees text the OCR could read – it does not replace looking.
 
 **b. `bpi.py qa KEY`** re-OCRs the built Public PDFs and searches for supplier terms and for 5+ digit numbers that
-were inside brackets. Verify each hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
+were inside brackets – on the same page, and anywhere else in the unit ("number 1,250,000 is visible here but
+bracketed in contract-1.pdf p18"). Verify each hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
 bracketed price "240.00" equals a public postcode "24000"; a public contract number contains a bracketed number.
 Fix real leaks, `ack` verified false positives. A "supplier term visible" hit often means the supplier regex is too
 strict for a misreading in the OCR cache: anchor the regex on a short distinctive fragment of the name. qa cannot

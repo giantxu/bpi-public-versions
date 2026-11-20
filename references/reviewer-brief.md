@@ -49,6 +49,8 @@ delete anything. If a supplier name is not being caught, tell me the name – I 
 
 - Run `bpi.py gate KEY` yourself for every unit reported as finished – do not take the report's word for it.
 - Read `bpi.py acks KEY`: acknowledgements that are not obviously right are leaks until proven otherwise.
+- A passed gate proves that the process was followed, not that the pages are right: the checks read OCR text and
+  cannot see a faint seal or a number the OCR missed, and they cannot tell whether a block is too large.
 - Look at a sample of Public pages from every reviewer (`bpi.py page … public`).
 - Harmonise: the same clause type must get the same treatment in every unit. When two reviewers decided
   differently, pick one rule, write it into `_work/rules.md`, fix the units, re-gate.

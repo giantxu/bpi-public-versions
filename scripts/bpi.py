@@ -15,7 +15,8 @@ Run from the matter folder (the one holding bpi_config.json):
   python bpi.py boxes KEY FILE [PAGE]    final brackets with ids and the text each one covers
   python bpi.py check KEY|all            apply the edit file without building; list every problem
   python bpi.py build KEY [FILE ...]|all write BPI + Public PDFs
-  python bpi.py audit KEY|all            text-based self-check: cut text, uncovered sensitive content
+  python bpi.py audit KEY|all            text-based self-check: cut text, uncovered sensitive content,
+                                         inconsistent numbers / clauses, over-bracketing
   python bpi.py qa KEY|all               re-OCR the Public PDFs and look for leaked bracketed content
   python bpi.py ack KEY ID [ID ...] -m "reason"    acknowledge a verified non-leak (audit / qa finding)
   python bpi.py acks [KEY ...]           list acknowledged findings (goes into the report)
@@ -585,11 +586,12 @@ def cmd_pubsheets(args):
 
 
 def cmd_qa(args):
-    """Leak check: OCR every Public page and search for (a) supplier terms and (b) 5+ digit numbers that
-    were inside a bracket in the source. Also checks page counts and headers. Hits need judgement
-    (a bracketed '240.00' equals a public postcode '24000'): fix real leaks, acknowledge verified
-    false positives with `ack`. qa cannot see names, signatures, seals or short numbers - audit and
-    the visual check of the Public sheets cover those."""
+    """Leak check: OCR every Public page and search for (a) supplier terms, (b) 5+ digit numbers that were
+    inside a bracket on the same page of the source and (c) numbers bracketed anywhere else in the unit
+    (a total bracketed on the item list but visible on the cover page). Also checks page counts and
+    headers. Hits need judgement (a bracketed '240.00' equals a public postcode '24000'): fix real leaks,
+    acknowledge verified false positives with `ack`. qa cannot see names, signatures, seals or short
+    numbers - audit and the visual check of the Public sheets cover those."""
     import ocr
     import checks as K
     from compat import fitz
@@ -598,10 +600,12 @@ def cmd_qa(args):
     total = 0
     for key, folder, only in targets(cfg, args, "qa"):
         terms = [re.compile(p) for p, l in cfg.terms(key) if l.lower().startswith(("supplier", "third", "manufacturer"))]
+        own_code = C.rx_join(cfg["own_code_regex"])
         items = []
 
         def hit(kind, out, pg, text):
             items.append({"id": K.fid(kind, out, pg, text), "kind": kind, "file": out, "page": pg, "text": text})
+        unit_secrets = K.unit_secrets(K.unit_pages_spec(cfg, key, folder)[0], own_code)
         for f, path, mode, out in C.files(cfg, folder):
             if not auto_path(cfg, folder, f).exists():
                 hit("qa-build", out, 0, "no proposals - run propose and build"); continue
@@ -625,10 +629,17 @@ def cmd_qa(args):
                                 secrets.add(re.sub(r"\D", "", tok))
                 got = [d["t"] for d in ocr.ocr_page(cfg, page, dpi=150, backend=backend)]
                 digits = " ".join(re.sub(r"\D", "", t) for t in got)
+                found = set()
                 for s in sorted(secrets):
                     if s in digits:
-                        hit("qa-num", out, i + 1, f"number {s} still visible")
+                        hit("qa-num", out, i + 1, f"number {s} still visible"); found.add(s)
                 for t in got:
+                    for c, a, b in K.num_tokens(t, own_code):
+                        s = c if (c in unit_secrets and len(c) >= 6) else None
+                        if s and not any(s in x or x in s for x in found):
+                            sf, sp = unit_secrets[s]
+                            if (sf, int(sp)) != (out, i + 1):
+                                hit("qa-num", out, i + 1, f"number {t[a:b]} is visible here but bracketed in {sf} p{sp}"); found.add(s)
                     if not cfg.own_re.search(t) and any(rx.search(t) for rx in terms):
                         hit("qa-term", out, i + 1, f"supplier term visible: {t[:60]}")
         (cfg.work / "qa").mkdir(exist_ok=True)
