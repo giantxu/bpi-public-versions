@@ -115,17 +115,27 @@ are merged and their labels composed; boxes inside a bigger box are dropped.
 **a. `bpi.py audit KEY`** (no OCR run, takes seconds; run it after every round of edits). It reads the source text
 and your brackets and lists
 - `cut` / `half` – a bracket edge cuts through text: `Contractor: N⟦ORTHSTAR … CO., LTD⟧` means the "N" is outside;
+  also a table cell whose number lies only partly inside ("the number 15 is only 7% inside …" – the bracket of
+  the price columns starts in the middle of the quantity column);
+- `qty` – the cells under a "Quantity" heading are visible while the prices in the same rows are bracketed (and
+  quantities are bracketed elsewhere in the unit);
 - `term`, `company`, `bank`, `contact`, `person`, `amount`, `amtwords`, `pay`, `ld`, `invno`, `remark`, `number` –
   sensitive-looking text that no bracket covers (also everything you removed with `delsrc` / `clear` and did not
   re-cover);
 - `same` – a number that is inside a bracket somewhere in the unit and visible here (the contract total on the
   cover page); `pair` – a payment / late-delivery clause bracketed in the original but not in its translation,
   or the reverse;
-- `seal` – a seal proposal left unbracketed; `code` – an unbracketed QR code / barcode with its decoded content;
+- `seal` – a seal proposal left unbracketed, or a faint mark at the left / right page edge that is not text:
+  a grey cross-page seal has no colour to find it by. Zoom in and **read** it – colour and position do not say
+  whose seal it is. The counterparty's fragment gets its own rectangle; the submitter's own is acknowledged,
+  quoting the words read on it. Never put a "Supplier seal" bracket on a seal you have not read;
+- `code` – an unbracketed QR code / barcode with its decoded content;
 - over-bracketing: `own` – a bracket covers the submitter's own name / address lines, or a bracket labelled as a
   supplier's seal lies on the submitter's own seal; `wide` – one bracket covers more than a third of the page
-  (or the brackets of a page more than half of it); `label` – the label names something that is not
-  confidential (scan edge, blank field, buyer logo). Fix these by shrinking or splitting the bracket: a table
+  (or the brackets of a page more than half of it), or a bracket labelled for numbers ("Quantities, unit prices
+  and amounts") also covers a dozen lines of item names, specifications and headings – a whole table instead of
+  its figure columns; `label` – the label names something that is not confidential (scan edge, blank field,
+  buyer logo). Fix these by shrinking or splitting the bracket: a table
   gets `{"table": …}` over its figure columns, a clause `{"span": …}`. A `wide` finding may be acknowledged
   only when everything inside really is confidential (a page-long payment schedule).
 Lines listed as "half covered" are information: extend the bracket if the line belongs to the bracketed item.
@@ -141,19 +151,30 @@ The audit only sees text the OCR could read – it does not replace looking.
 
 **b. `bpi.py qa KEY`** re-OCRs the built Public PDFs and searches for supplier terms and for 5+ digit numbers that
 were inside brackets – on the same page, and anywhere else in the unit ("number 1,250,000 is visible here but
-bracketed in contract-1.pdf p18"). Verify each hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
+bracketed in contract-1.pdf p18"). It also reads the text at every bracket edge again, because a bracket placed
+by text can start one character late without the audit seeing it: `Free On Board 12|,345,600.00 – the bracket
+'Amount' starts at |` means "12" is visible in the Public version; `Manager: 王|小明` means the family name is.
+Move the edge (`grow`, or a corrected `text` / `after` pattern) so that the whole word, name or number is inside,
+or – when it cuts public text – so that it is outside. "The left edge … cuts through 12 text lines" is a column
+rectangle lying across the text: move that edge into the gap between the columns. Verify each hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
 bracketed price "240.00" equals a public postcode "24000"; a public contract number contains a bracketed number.
 Fix real leaks, `ack` verified false positives. A "supplier term visible" hit often means the supplier regex is too
 strict for a misreading in the OCR cache: anchor the regex on a short distinctive fragment of the name. qa cannot
-see names of persons, signatures, seals or short numbers.
+see whole names of persons, signatures, seals or short numbers that stand alone.
 
-**c. Looking at the Public pages.** `bpi.py pubsheets KEY` → look at **every** image in `_work/pub/KEY/` (4 pages
-each); zoom into doubtful spots with `bpi.py page KEY FILE PAGE public X0 Y0 X1 Y1`. Any visible supplier
-identity, price, quantity, amount, account / tax number, personal name, signature, seal or payment / penalty term
-is a leak: fix, rebuild that file, regenerate, look again. Then record it: `bpi.py viewed KEY N`.
+**c. Looking at the Public pages.** `bpi.py pubsheets KEY` writes two kinds of images to `_work/pub/KEY/`:
+`pub_NNN.png` (4 Public pages each) and `pub_ink_NNN.png` – enlarged cut-outs of everything on the Public pages
+that is ink but not text and not inside a bracket: seals (also faint grey fragments at the page edge),
+signatures, stamps, handwriting. These are exactly the things no text check can see. Look at **every** image; on
+the cut-outs read each seal fragment (whose name is on it?) and check that no signature or handwritten name is
+left; zoom into doubtful spots with `bpi.py page KEY FILE PAGE public X0 Y0 X1 Y1`. Any visible supplier
+identity, price, quantity, amount, account / tax number, personal name, signature, counterparty seal or payment /
+penalty term is a leak: fix, rebuild that file, regenerate, look again. Every image shows a code in its top right
+corner; record the check with all of them: `bpi.py viewed KEY CODE CODE …`. If you cannot view images, do not
+guess: tell the user that the visual check of this unit has to be done by a person.
 
 `bpi.py gate KEY` checks all of this (clean edit file, fresh build, no open audit / qa findings, Public sheets
-newer than the build and attested as viewed) and prints PASS or FAIL with the next command. **A unit is done when
+newer than the build and their codes entered) and prints PASS or FAIL with the next command. **A unit is done when
 its gate passes – not before.**
 
 ## 5. Efficient patterns

@@ -36,7 +36,9 @@ one visible supplier name or account number is a failed job, however many pages 
    a bracket over that clause, not over the page.
 7. **Three checks, all required, none replaces another:** `audit` (text cut by a bracket edge, sensitive text
    outside every bracket, a number or clause bracketed in one place and visible in another, over-bracketing),
-   `qa` (re-OCR of the Public files), and looking at every Public page yourself.
+   `qa` (re-OCR of the Public files and of the text at every bracket edge), and looking at every Public page
+   yourself – seals and signatures can only be judged by eye, and a seal belongs to whoever is named on it, so
+   read it before you label it. If you cannot view images, say so; do not record a check you did not make.
 8. **Never silence a finding.** Fix the cause, or `ack` it with the true reason why the item is public. Never make
    a finding disappear by drawing a bigger bracket over text that is not confidential – the audit reports that
    too. Acknowledged items go into your report.
@@ -104,7 +106,8 @@ bpi.py check KEY                   # the edit file applies cleanly?  then: boxes
 bpi.py build KEY                   # BPI + Public PDFs (build KEY "file.pdf" for one file)
 bpi.py audit KEY                   # fix or acknowledge every finding; rebuild what you changed
 bpi.py qa KEY                      # fix real leaks, acknowledge verified false positives
-bpi.py pubsheets KEY               # look at EVERY Public sheet; then: bpi.py viewed KEY N
+bpi.py pubsheets KEY               # look at EVERY image (pages + cut-outs of seals / signatures); each shows
+                                   #   a code: bpi.py viewed KEY CODE CODE ...
 bpi.py gate KEY                    # PASS = unit finished
 ```
 

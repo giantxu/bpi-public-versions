@@ -17,11 +17,11 @@ Run from the matter folder (the one holding bpi_config.json):
   python bpi.py build KEY [FILE ...]|all write BPI + Public PDFs
   python bpi.py audit KEY|all            text-based self-check: cut text, uncovered sensitive content,
                                          inconsistent numbers / clauses, over-bracketing
-  python bpi.py qa KEY|all               re-OCR the Public PDFs and look for leaked bracketed content
+  python bpi.py qa KEY|all               re-OCR the Public PDFs: leaked bracketed content, text cut at a bracket edge
   python bpi.py ack KEY ID [ID ...] -m "reason"    acknowledge a verified non-leak (audit / qa finding)
   python bpi.py acks [KEY ...]           list acknowledged findings (goes into the report)
-  python bpi.py pubsheets KEY|all        4 Public pages per image -> _work/pub/KEY/ (visual leak review)
-  python bpi.py viewed KEY N             attest that all N Public sheet images were looked at
+  python bpi.py pubsheets KEY|all        Public pages + cut-outs of seals / signatures -> _work/pub/KEY/ (visual review)
+  python bpi.py viewed KEY CODE ...      the code shown on every Public sheet image (proves each was opened)
   python bpi.py gate KEY|all             PASS / FAIL - a unit is finished only when its gate passes
   python bpi.py samples-ok "user said .."  record the user's approval of the samples (unlocks volume work)
   python bpi.py log KEY|all              BCI log spreadsheet (one row per bracket)
@@ -556,33 +556,84 @@ def cmd_build(args):
 
 
 def cmd_pubsheets(args):
-    """4 built Public pages per image at readable size, for the visual leak review -> work/pub/KEY/"""
+    """Images for the visual leak review -> work/pub/KEY/ :
+    pub_NNN.png      4 built Public pages per image;
+    pub_ink_NNN.png  enlarged cut-outs of everything on the Public pages that is ink but not text and not inside a
+                     bracket - seals (also faint grey ones), signatures, stamps, handwriting: what no text check sees.
+    Every image carries a code; `viewed` asks for all of them, so the images have to be opened."""
+    import hashlib, random
+    import checks as K
     from compat import fitz
     cfg = C.Cfg()
     for key, folder, only in targets(cfg, args, "pubsheets"):
         od = cfg.work / "pub" / key
         shutil.rmtree(od, ignore_errors=True); od.mkdir(parents=True, exist_ok=True)
-        pages = []
+        pages, docs = [], {}
         for f, path, mode, out in C.files(cfg, folder):
             p = cfg.out_dir(cfg.out_pub, folder) / out
             if not p.exists():
                 print(f"WARN {out}: not built"); continue
-            for i, pg in enumerate(fitz.open(str(p))):
+            docs[f] = fitz.open(str(p))
+            for i, pg in enumerate(docs[f]):
                 pages.append((f"{out} p{i + 1}", pg.get_pixmap(dpi=72)))
-        idx = []
-        for s in range(0, len(pages), 4):
-            sd = fitz.open(); sp = sd.new_page(width=1200, height=1720)
-            for k, (lab, pm) in enumerate(pages[s:s + 4]):
-                x = (k % 2) * 600; y = (k // 2) * 860
+        salt = "%08x" % random.getrandbits(32)
+        hashes, idx = [], []
+
+        def finish(sp, name, what):
+            code = "".join(random.choice("ACDEFHJKLMNPRTUVWXY34679") for _ in range(4))
+            hashes.append(hashlib.sha1((salt + code).encode()).hexdigest())
+            sp.draw_rect(fitz.Rect(1040, 2, 1198, 26), color=(1, 0, 0), fill=(1, 1, 1))
+            sp.insert_text((1048, 20), f"CODE  {code}", fontsize=15, color=(1, 0, 0), fontname="hebo")
+            fn = od / name
+            sp.get_pixmap(dpi=72).save(str(fn))
+            idx.append(f"{fn.name}  {what}")
+        for s_ in range(0, len(pages), 4):
+            sd = fitz.open(); sp = sd.new_page(width=1200, height=1750)
+            for k, (lab, pm) in enumerate(pages[s_:s_ + 4]):
+                x = (k % 2) * 600; y = 30 + (k // 2) * 860
                 sp.insert_image(fitz.Rect(x, y + 14, x + 600, y + 860), pixmap=pm, keep_proportion=True)
                 sp.insert_text((x + 4, y + 11), lab.encode("ascii", "replace").decode(), fontsize=11, color=(1, 0, 0), fontname="hebo")
                 sp.draw_rect(fitz.Rect(x, y, x + 600, y + 860), color=(0.5, 0.5, 0.5))
-            fn = od / f"pub_{s // 4 + 1:03d}.png"
-            sp.get_pixmap(dpi=72).save(str(fn))
-            idx.append(f"{fn.name}  " + " | ".join(l for l, _ in pages[s:s + 4]))
+            finish(sp, f"pub_{s_ // 4 + 1:03d}.png", " | ".join(l for l, _ in pages[s_:s_ + 4]))
+        # cut-outs of non-text ink outside every bracket
+        ups, _ = K.unit_pages_spec(cfg, key, folder)
+        ink = K.unit_ink(cfg, folder, ups)
+        cuts = []
+        for p in ups:
+            if p["f"] not in docs:
+                continue
+            page = docs[p["f"]][int(p["pg"]) - 1]
+            W, H = page.rect.width, page.rect.height
+            for b in ink.get((p["f"], str(p["pg"])), []):
+                r = b["r"]
+                if K.cover(r, p["regs"]) >= 0.5 or (r[2] - r[0]) * (r[3] - r[1]) > 0.25 or r[3] < 0.03:
+                    continue
+                if b["dens"] > 0.45 and r[2] - r[0] < 0.08 and r[3] - r[1] < 0.07:
+                    continue                      # a solid dot: punch hole
+                clip = fitz.Rect((r[0] - .02) * W, (r[1] - .015) * H, (r[2] + .02) * W, (r[3] + .015) * H) & page.rect
+                z = min(2.2, 560 / max(1, clip.width), 500 / max(1, clip.height))
+                cuts.append((f"{p['out']} p{p['pg']} @{r[0]:.2f},{r[1]:.2f}", page.get_pixmap(matrix=fitz.Matrix(z, z), clip=clip)))
+        sp, x, y, rowh, n = None, 0, 0, 0, 0
+        for lab, pm in cuts + [(None, None)]:
+            if lab is None or sp is None or (x + pm.width > 1190 and y + rowh + pm.height + 20 > 1740):
+                if sp is not None:
+                    n += 1
+                    finish(sp, f"pub_ink_{n:03d}.png", "non-text ink outside the brackets (seals, signatures, stamps, handwriting)")
+                if lab is None:
+                    break
+                sp = fitz.open().new_page(width=1200, height=1750); x, y, rowh = 6, 34, 0
+            if x + pm.width > 1190:
+                x, y, rowh = 6, y + rowh + 20, 0
+            sp.insert_image(fitz.Rect(x, y + 12, x + pm.width, y + 12 + pm.height), pixmap=pm)
+            sp.insert_text((x, y + 9), lab.encode("ascii", "replace").decode()[:int(max(20, pm.width / 5.5))], fontsize=9, color=(1, 0, 0), fontname="hebo")
+            sp.draw_rect(fitz.Rect(x, y + 12, x + pm.width, y + 12 + pm.height), color=(0.6, 0.6, 0.6), width=0.5)
+            x += pm.width + 12; rowh = max(rowh, pm.height + 12)
         (od / "index.txt").write_text("\n".join(idx), encoding="utf-8")
-        print(f"pub sheets {od}: {len(idx)} images. Look at EVERY one, zoom doubtful spots with "
-              f"`bpi.py page {key} FILE PAGE public X0 Y0 X1 Y1`, then: bpi.py viewed {key} {len(idx)}")
+        (od / "codes.json").write_text(json.dumps({"salt": salt, "hashes": hashes}), encoding="utf-8")
+        print(f"pub sheets {od}: {len(idx)} images ({n} with cut-outs of non-text ink). Look at EVERY one - on the pub_ink "
+              f"images read every seal fragment and check that no signature is left; zoom doubtful spots with "
+              f"`bpi.py page {key} FILE PAGE public X0 Y0 X1 Y1`. Each image shows a CODE in its top right corner; "
+              f"when all are checked: bpi.py viewed {key} CODE CODE ...")
 
 
 def cmd_qa(args):
@@ -613,15 +664,22 @@ def cmd_qa(args):
             pubp, bpip = cfg.out_dir(cfg.out_pub, folder) / out, cfg.out_dir(cfg.out_bpi, folder) / out
             if spec["errors"] or not pubp.exists() or not bpip.exists():
                 hit("qa-build", out, 0, "output missing or edit errors - run check and build"); continue
-            pub, src = fitz.open(pubp), fitz.open(path)
-            if len(pub) != len(src) or len(fitz.open(bpip)) != len(src):
-                hit("qa-build", out, 0, "page count differs from source")
+            pub, src, bpi = fitz.open(pubp), fitz.open(path), fitz.open(bpip)
+            if len(pub) != len(src) or len(bpi) != len(src):
+                hit("qa-build", out, 0, "page count differs from source"); continue
             for i, page in enumerate(pub):
                 if cfg["public_header"].split()[0] not in page.get_text():
                     hit("qa-build", out, i + 1, "public header missing")
                 regs = spec["pages"].get(str(i + 1), [])
                 secrets = set()
-                for d in lines_cached(cfg, folder, f, spec, i + 1):
+                src_lines = lines_cached(cfg, folder, f, spec, i + 1)
+                if mode == "scan" and regs:
+                    sp = src[i]
+                    if sp.rotation:
+                        sp.remove_rotation()
+                    for _, msg in K.edge_cuts(cfg, sp, regs, src_lines, backend):
+                        hit("qa-cut", out, i + 1, msg)
+                for d in src_lines:
                     cx, cy = d["x"] + d["w"] / 2, d["y"] + d["h"] / 2
                     if any(r["r"][0] <= cx <= r["r"][2] and r["r"][1] <= cy <= r["r"][3] for r in regs):
                         for tok in re.findall(r"\d[\d,，.]{4,}\d", d["t"]):

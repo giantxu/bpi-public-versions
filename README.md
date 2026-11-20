@@ -31,8 +31,10 @@ why each item is confidential.
 5. **Unit by unit** – OCR → automatic proposals (supplier terms, amounts, bank lines, price columns, payment and
    penalty clauses, seals, handwriting) → page-by-page review on contact sheets with text-anchored edits → build.
 6. **Three checks** – a text audit (text cut by a bracket edge, sensitive text outside every bracket, a number or
-   clause bracketed in one place and visible in another, over-bracketing of the submitter's own details or of
-   whole pages), a re-OCR of every Public page, and a visual check of every Public page. A unit is finished only when
+   clause bracketed in one place and visible in another, quantity columns left out, over-bracketing of the
+   submitter's own details, of whole tables or of whole pages), a re-OCR of every Public page and of the text at
+   every bracket edge (a bracket that starts one character late), and a visual check of every Public page plus
+   enlarged cut-outs of seals, signatures and other non-text ink. A unit is finished only when
    `bpi.py gate` prints PASS; findings are fixed or acknowledged with a written reason.
 7. **Report** – outputs, BCI log, gate results, acknowledged findings, judgement calls for confirmation.
 
@@ -70,7 +72,7 @@ python scripts/bpi.py build KEY [FILE ...]      # BPI + Public PDFs
 python scripts/bpi.py audit KEY                 # leaks, inconsistencies and over-bracketing found in the text
 python scripts/bpi.py qa KEY                    # re-OCR leak check of the Public PDFs
 python scripts/bpi.py ack KEY ID ... -m "why"   # acknowledge a verified non-leak ; acks = list them
-python scripts/bpi.py pubsheets KEY ; viewed KEY N    # visual check of every Public page
+python scripts/bpi.py pubsheets KEY ; viewed KEY CODE ...   # visual check: pages and seal / signature cut-outs
 python scripts/bpi.py gate KEY|all              # PASS / FAIL - a unit is finished when its gate passes
 python scripts/bpi.py samples-ok "…" | log | status
 ```

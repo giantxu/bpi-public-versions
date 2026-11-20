@@ -51,7 +51,7 @@ Created by `bpi.py init` in the matter folder. Paths are relative to that folder
 
 Work folder layout: `ocr/` OCR cache · `auto/` proposals · `review/KEY.json` edits · `terms.json`, `terms_KEY.json`
 supplier regexes · `sheets/KEY/` contact sheets · `page/KEY/` single-page views · `pub/KEY/` Public sheets ·
-`audit/`, `qa/` findings · `ack/KEY.json` acknowledged findings · `state.json` samples approval / viewed sheets ·
+`audit/`, `qa/` findings · `ack/KEY.json` acknowledged findings · `state.json` samples approval / viewed sheets · `ink/` cache of non-text ink per source file ·
 `docxpdf/` converted Word files · `rules.md` agreed rules.
 
 Environment variable `BPI_UNITS=205,206` (`;` as separator when a key contains a comma) restricts a process to those

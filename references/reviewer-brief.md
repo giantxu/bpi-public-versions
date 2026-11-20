@@ -33,8 +33,8 @@ Work file by file:
 2. Edit `_work/review/KEY.json`, preferring text-anchored adds (`text`, `after`, `span`, `lines`, `table`).
 3. `bpi.py check KEY` until clean; `bpi.py boxes KEY "file" PAGE` for the pages you touched.
 4. `bpi.py build KEY "file"`; `bpi.py audit KEY` – fix or acknowledge (with the real reason) every finding.
-When all files are done: `bpi.py qa KEY`, `bpi.py pubsheets KEY`, look at EVERY Public sheet, `bpi.py viewed KEY N`,
-then `bpi.py gate KEY`.
+When all files are done: `bpi.py qa KEY`, `bpi.py pubsheets KEY`, look at EVERY image (pages and the cut-outs of
+seals / signatures), `bpi.py viewed KEY CODE …` with the code shown on each image, then `bpi.py gate KEY`.
 
 Report after EACH file in one line (file, pages, open audit findings) so that progress survives an interruption,
 and at the end paste the complete output of `bpi.py gate KEY` and `bpi.py acks KEY`. A unit whose gate does not
@@ -49,8 +49,9 @@ delete anything. If a supplier name is not being caught, tell me the name – I 
 
 - Run `bpi.py gate KEY` yourself for every unit reported as finished – do not take the report's word for it.
 - Read `bpi.py acks KEY`: acknowledgements that are not obviously right are leaks until proven otherwise.
-- A passed gate proves that the process was followed, not that the pages are right: the checks read OCR text and
-  cannot see a faint seal or a number the OCR missed, and they cannot tell whether a block is too large.
+- A passed gate proves that the process was followed, not that the pages are right: the checks read OCR text,
+  see only the clearer seal fragments and cannot tell whose seal a bracket lies on. Read the acknowledgements of
+  `seal` findings against the page images.
 - Look at a sample of Public pages from every reviewer (`bpi.py page … public`).
 - Harmonise: the same clause type must get the same treatment in every unit. When two reviewers decided
   differently, pick one rule, write it into `_work/rules.md`, fix the units, re-gate.

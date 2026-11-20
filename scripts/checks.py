@@ -20,7 +20,7 @@ import cfg as C
 import edits as E
 
 MUST = ("term", "company", "cut", "bank", "contact", "person", "pay", "ld", "amount", "amtwords", "invno",
-        "remark", "number", "same", "pair", "seal", "code", "own", "wide", "label")
+        "remark", "number", "same", "pair", "qty", "seal", "code", "own", "wide", "label")
 HINT = {
     "cut": "a bracket edge cuts this text - extend the bracket (text / lines / grow edit) so the whole item is inside",
     "same": "this number is inside a bracket elsewhere in the unit - bracket it here too (or remove the other bracket if it is public)",
@@ -28,6 +28,7 @@ HINT = {
     "pay": "a payment clause is not inside any bracket (bracket the whole clause, in every language version)",
     "ld": "a late-delivery / liquidated-damages clause is not inside any bracket (whole clause, every language version)",
     "amount": "an amount / total is not inside any bracket",
+    "qty": "quantities are bracketed elsewhere in this unit - include the quantity column in the bracket here too",
     "own": "over-bracketing: the submitter's own name, address, logo and seal are public - shrink the bracket or split it "
            "so that only the confidential part is inside (its own account numbers stay bracketed)",
     "wide": "over-bracketing: bracket only the confidential columns / lines (table: {\"table\": ...}; clause: {\"span\": ...}); "
@@ -37,7 +38,9 @@ HINT = {
     "term": "a supplier term is not inside any bracket",
     "company": "a company name that is not the submitter's is not inside any bracket",
     "number": "a long number (account, phone, ID ...) is not inside any bracket",
-    "seal": "a seal / seal fragment is not inside any bracket - identify whose it is",
+    "seal": "a seal / seal fragment is not inside any bracket - read its text on a zoomed page image to identify whose it "
+            "is (colour and position do not tell): the counterparty's seal is bracketed with its own rectangle, the "
+            "submitter's own seal is acknowledged, quoting the words read on it",
     "code": "a QR code / barcode is not bracketed - bracket it unless its content is printed in clear on the page",
 }
 COMPANY = re.compile(r"(?i)有限责任公司|有限公司|集团公司|股份公司|\bco\.?\s*,?\s*ltd\b\.?|sdn\.?\s*bhd\b\.?|\bgmbh\b|\bllc\b|\bpte\b\.?\s*ltd|"
@@ -216,6 +219,235 @@ def _boundary(t, i):
     return cls(a) != cls(b)
 
 
+def _joined(t, i):
+    """do t[i-1] and t[i] belong to the same word / name / number? (a bracket edge there cuts it)"""
+    if i <= 0 or i >= len(t):
+        return False
+    a, b = t[i - 1], t[i]
+    if a.isdigit() and b in ",.，" and i + 1 < len(t) and t[i + 1].isdigit():
+        return True                               # 12|,345,600.00
+    if a in ",.，" and b.isdigit() and i >= 2 and t[i - 2].isdigit():
+        return True
+    if not (a.isalnum() and b.isalnum()) or _boundary(t, i):
+        return False
+    if "一" <= a <= "鿿":                # CJK has no word spaces: only a short run after a label is one name
+        j = i
+        while j > 0 and "一" <= t[j - 1] <= "鿿":
+            j -= 1
+        return i - j <= 2
+    return not (a.islower() and b.isupper())      # "SellerNORTHSTAR": a lost space, not one word
+
+
+NUMCELL = re.compile(r"^[\s|｜:：]*\d[\d,，.]*[\s|｜:：]*$")
+QTY_HEAD = re.compile(r"(?i)^[\s|｜]*(?:数\s*量|工\s*程\s*量|q['’]?ty\.?|quantit(?:y|ies)|no\.?\s*of\s*units)\s*(?:[(（][^)）]{0,12}[)）])?[\s|｜]*$")
+NUMLABEL = re.compile(r"(?i)quantit|price|amount")
+NOT_NUMLABEL = re.compile(r"(?i)name|term|clause|account|seal|sign|descri|payment|address|contact|manufactur|bank|tax|number|\bno\b")
+UNITWORD = re.compile(r"(?i)^(?:cny|usd|rmb|myr|rm|eur|sets?|pcs?|pieces?|kgs?|tons?|mt|m[23]?|t|ea|units?|lots?|nos?|台|套|个|件|吨|米|项|批|只|块|支|根|张|组|面|元|万元)$")
+
+
+def qty_cells(lines):
+    """numeric cells under a quantity header -> [(header line, [cell lines])]"""
+    import propose as P
+    out = []
+    nums = [d for d in lines if NUMCELL.match(d["t"]) and not P.is_vertical(d)]
+    for h in lines:
+        if not QTY_HEAD.match(h["t"]) or P.is_vertical(h):
+            continue
+        col = [d for d in nums if h["x"] - 0.02 <= d["x"] + d["w"] / 2 <= h["x"] + h["w"] + 0.02
+               and h["y"] + h["h"] * 0.5 < d["y"] < h["y"] + 0.6]
+        if col:
+            out.append((h, col))
+    return out
+
+
+def edge_cuts(cfg, page, regs, lines, backend=None, dpi=200):
+    """A bracket that starts one character late or ends one early: "Invoice No.: N[ST-2023-01]", "Total 12[,345.00]".
+    Character positions estimated from line boxes are too coarse to see that, so this reads the page again: for
+    every text line that a bracket starts or ends in, the strip just INSIDE the bracket edge (taken from the
+    source page, where the text is intact) is OCR-ed and located in the source line. If the bracketed text begins
+    or ends in the middle of a word, name or number, the other part is visible in the Public version. An edge that
+    runs through the ink of a character is reported as well.   page = the SOURCE page.   -> [(rect, message)]"""
+    import ocr, os, tempfile
+    import propose as P
+    from PIL import Image
+    from compat import fitz
+    tasks = []
+    W, H = page.rect.width, page.rect.height
+    for d in lines:
+        t = d["t"]
+        if P.is_vertical(d) or len(re.findall(r"\w", t)) < 3:
+            continue
+        x0, y0, x1, y1 = d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]
+        cw = d["h"] * H / W * 0.6                 # about one character, in page-width units
+        for q in regs:
+            r = q["r"]
+            if PICT.search(q["label"]) or min(y1, r[3]) - max(y0, r[1]) < 0.6 * d["h"] or r[0] >= x1 or r[2] <= x0:
+                continue
+            a, b = P.char_span(d, r)
+            others = [o for o in regs if o is not q]
+            if r[0] - x0 > cw * 0.7 and cover([r[0] - cw, y0, r[0], y1], others) < 0.5:
+                tasks.append(("L", d, q, r[0], min(x1, r[0] + 14 * cw), a))     # runs on past a short bracket:
+            if x1 - r[2] > cw * 0.7 and cover([r[2], y0, r[2] + cw, y1], others) < 0.5:   # context helps the OCR
+                tasks.append(("R", d, q, max(x0, r[2] - 14 * cw), r[2], b))
+    if not tasks:
+        return []
+    pm = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    img = Image.frombytes("L", (pm.width, pm.height), pm.samples)
+    import numpy as np
+    ink = np.frombuffer(pm.samples, dtype=np.uint8).reshape(pm.height, pm.width) < 140
+    crops, through, glyph = [], [], []
+    for side, d, q, xa, xb, _ in tasks:
+        pad = d["h"] * 0.3
+        box = (int(round(xa * pm.width)), int((d["y"] - pad) * pm.height),
+               int(round(xb * pm.width)), int((d["y"] + d["h"] + pad) * pm.height))
+        crops.append(img.crop(box) if box[2] - box[0] > 6 and box[3] - box[1] > 6 else None)
+        # does the edge run through a character? (one blob of ink reaching 2+ pixels to both sides of it)
+        xe = box[0] if side == "L" else box[2]
+        cp = max(6, int(d["h"] * pm.height * 0.6))
+        ya, yb = max(0, int(d["y"] * pm.height)), min(pm.height, int((d["y"] + d["h"]) * pm.height) + 1)
+        win = ink[ya:yb, max(0, xe - cp):min(pm.width, xe + cp)].copy()
+        c0 = xe - max(0, xe - cp)
+        hit_ = False
+        if win.size and 2 <= c0 < win.shape[1] - 2:
+            win &= ~(win.sum(0) > 0.85 * win.shape[0])[None, :]       # cell borders
+            win[win.sum(1) > 0.8 * win.shape[1], :] = False           # rules, underlines
+            stack = [(int(y_), c0) for y_ in np.flatnonzero(win[:, c0])]
+            seen_ = set(stack); lo_ = hi_ = c0; ys_ = [y_ for y_, _ in stack]
+            while stack:
+                cy_, cx_ = stack.pop()
+                lo_, hi_ = min(lo_, cx_), max(hi_, cx_); ys_.append(cy_)
+                for ny, nx in ((cy_ + 1, cx_), (cy_ - 1, cx_), (cy_, cx_ + 1), (cy_, cx_ - 1)):
+                    if 0 <= ny < win.shape[0] and 0 <= nx < win.shape[1] and win[ny, nx] and (ny, nx) not in seen_:
+                        seen_.add((ny, nx)); stack.append((ny, nx))
+            hit_ = bool(ys_) and c0 - lo_ >= 3 and hi_ - c0 >= 3 and max(ys_) - min(ys_) + 1 >= 0.3 * (yb - ya)
+        through.append(hit_)
+        # is the last thing on the visible side of the edge a character (not a colon, a comma or blank paper)?
+        hw = max(5, int(d["h"] * pm.height * 0.5))
+        vwin = ink[ya:yb, max(0, xe - hw):xe] if side == "L" else ink[ya:yb, xe:min(pm.width, xe + hw)]
+        vwin = vwin & ~(vwin.sum(0) > 0.85 * max(1, vwin.shape[0]))[None, :] if vwin.size else vwin
+        rows_ = np.flatnonzero(vwin.sum(1) >= 1) if vwin.size else []
+        span_ = (rows_[-1] - rows_[0] + 1) if len(rows_) else 0
+        glyph.append(bool(span_ >= 0.3 * (yb - ya) and len(rows_) >= 0.75 * span_))
+    gap, y, tops = 40, 40, []
+    wmax = max((c.width for c in crops if c), default=0)
+    if not wmax:
+        return []
+    sheet = Image.new("L", (wmax + 80, sum((c.height + gap) for c in crops if c) + 80), 255)
+    for c in crops:
+        if c is None:
+            tops.append(None); continue
+        sheet.paste(c, (40, y)); tops.append(y); y += c.height + gap
+    fd, png = tempfile.mkstemp(suffix=".png"); os.close(fd)
+    try:
+        sheet.save(png)
+        got = ocr.ocr_png(cfg, png, backend)
+    finally:
+        if os.path.exists(png):
+            os.remove(png)
+    seen = [[] for _ in tasks]
+    for g in got:
+        cy = (g["y"] + g["h"] / 2) * sheet.height
+        for k, (tp, c) in enumerate(zip(tops, crops)):
+            if c is not None and tp - gap / 2 <= cy < tp + c.height + gap / 2:
+                seen[k].append((g["x"], g["t"])); break
+
+    def aln(s_):
+        ix = [i for i, c in enumerate(s_) if c.isalnum()]
+        return "".join(s_[i] for i in ix).lower(), ix
+    out, edges = [], {}
+    for (side, d, q, xa, xb, pos), sv, thru, gl in zip(tasks, seen, through, glyph):
+        t = d["t"]
+        tn, ix = aln(t)
+        vn, _ = aln(" ".join(v for _, v in sorted(sv)))
+        est = sum(1 for ch in t[:pos] if ch.isalnum())
+        cut = None
+        for o in (0, 1):                           # o = 1: the character at the very edge was clipped and misread
+            for m in (3, 2):
+                key = vn[o:o + m] if side == "L" else vn[len(vn) - o - m:len(vn) - o]
+                if len(key) < m:
+                    continue
+                ks = [k for k in range(max(0, est - 4), min(len(tn), est + 4) + 1)
+                      if (tn[k:k + m] == key if side == "L" else (k >= m and tn[k - m:k] == key))]
+                if ks:
+                    k = min(ks, key=lambda v: abs(v - est))
+                    # o = 1: the source character k-1 (L) / k (R) lies across the edge, so the cut is on its far side
+                    # (only trusted for CJK, where half a character reads as another one; a digit or letter next
+                    # to the bracket stroke is misread too easily)
+                    half = tn[k - 1] if side == "L" and k > 0 else (tn[k] if side == "R" and k < len(tn) else "")
+                    if o and not ("一" <= half <= "鿿"):
+                        break
+                    if side == "L" and 0 < k < len(ix):
+                        cut = ix[k]
+                    elif side == "R" and 0 < k < len(ix):
+                        cut = ix[k - 1] + 1
+                    break
+            if cut is not None or len(vn) < 3:
+                break
+        box = [d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]]
+        nhit = len(out)
+        if cut is not None and _joined(t, cut) and gl:
+            out.append((box, f"{t[max(0, cut - 16):cut]}|{t[cut:cut + 16]}   - the bracket '{q['label'][:28]}' "
+                        f"{'starts' if side == 'L' else 'ends'} at | , inside one word / name / number: the part "
+                        f"{'before' if side == 'L' else 'after'} it stays visible"))
+        elif thru and 0 < est < len(ix):
+            cut = ix[est]
+            out.append((box, f"{t[max(0, cut - 16):cut]}|{t[cut:cut + 16]}   - the {'left' if side == 'L' else 'right'} edge of "
+                        f"the bracket '{q['label'][:28]}' (near |) runs through a character: half of it stays visible"))
+        if len(out) > nhit:
+            edges.setdefault((id(q), side), []).append(len(out) - 1)
+    # one bracket edge that cuts many lines (a table column placed across the text) is one finding, not twenty
+    drop = set()
+    for (_, side), ids in edges.items():
+        if len(ids) >= 3:
+            ex = "; ".join(out[i][1].split("   - ")[0].strip() for i in ids[:3])
+            lab = out[ids[0]][1].split("bracket '")[1].split("'")[0]
+            u = [min(out[i][0][0] for i in ids), min(out[i][0][1] for i in ids), max(out[i][0][2] for i in ids), max(out[i][0][3] for i in ids)]
+            out[ids[0]] = (u, f"the {'left' if side == 'L' else 'right'} edge of the bracket '{lab}' cuts through {len(ids)} text lines "
+                              f"(e.g. {ex}) - move that edge into the gap between the columns / words")
+            drop.update(ids[1:])
+    return [o for i, o in enumerate(out) if i not in drop]
+
+
+def page_ink(cfg, folder, f, path, pages_lines):
+    """non-text ink of every page of a scanned file (cached per source file) -> {page: [blob]}"""
+    import seals
+    from compat import fitz
+    cp = cfg.work / "ink" / folder / (f + ".json")
+    mt = os.path.getmtime(path)
+    if cp.exists():
+        try:
+            c = json.loads(cp.read_text(encoding="utf-8"))
+            if c.get("mtime") == mt and c.get("v") == 1:
+                return c["pages"]
+        except Exception:
+            pass
+    doc, res = fitz.open(str(path)), {}
+    for pg, lines in pages_lines.items():
+        page = doc[int(pg) - 1]
+        if page.rotation:
+            page.remove_rotation()
+        res[str(pg)] = seals.ink_boxes(page, [[d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]] for d in lines])
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(json.dumps({"v": 1, "mtime": mt, "pages": res}), encoding="utf-8")
+    return res
+
+
+def unit_ink(cfg, folder, pages):
+    """{(file, page): [blob]} for the scanned pages of a unit"""
+    by = {}
+    for p in pages:
+        if p["mode"] == "scan":
+            by.setdefault((p["f"], str(p["path"])), {})[p["pg"]] = p["lines"]
+    out = {}
+    for (f, path), pl in by.items():
+        try:
+            for pg, bl in page_ink(cfg, folder, f, path, pl).items():
+                out[(f, str(pg))] = bl
+        except Exception:
+            continue
+    return out
+
+
 def unit_pages_spec(cfg, key, folder):
     """every page of the unit with its final brackets and text lines"""
     res, notes = [], []
@@ -270,6 +502,9 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
 
     pages, notes = unit_pages_spec(cfg, key, folder)
     secrets = unit_secrets(pages, own_code)
+    unit_qty = any(re.search(r"(?i)quantit", q["label"]) for p in pages for q in p["regs"])
+    import seals
+    ink = unit_ink(cfg, folder, [p for p in pages if not only or p["f"] in only])
     cds_by = {}
     for p in pages:
         f, out, pg, regs, lines, mode = p["f"], p["out"], p["pg"], p["regs"], p["lines"], p["mode"]
@@ -283,9 +518,20 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
         # 1. text cut by a bracket edge
         for d in lines:
             t = d["t"]
+            x0, y0, x1, y1 = d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]
+            if NUMCELL.match(t) and not P.is_vertical(d):
+                # a table cell holding one number: its box is exact, so a bracket edge across it is a cut
+                for q in regs:
+                    r = q["r"]
+                    al = (min(x1, r[2]) - max(x0, r[0])) / max(1e-6, d["w"])
+                    ac = (min(y1, r[3]) - max(y0, r[1])) / max(1e-6, d["h"])
+                    if ac >= 0.6 and min(al, 1 - al) * len(t.strip()) >= 0.35 and not PICT.search(q["label"]) \
+                            and cover([x0, y0, x1, y1], [o for o in regs if o is not q]) < 0.3:
+                        add("cut", f, out, pg, [x0, y0, x1, y1],
+                            f"the number {t.strip()} is only {al * 100:.0f}% inside '{q['label'][:28]}' - the rest stays visible")
+                continue
             if len(t.strip()) < 3 or own.search(t):
                 continue                      # the submitter's own details may be visible
-            x0, y0, x1, y1 = d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]
             vert = P.is_vertical(d)
             for q in regs:
                 r = q["r"]
@@ -353,6 +599,22 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
                 b, _ = P.sub_box(d, m.start(), m.end())
                 if cover(b, regs) < 0.6:
                     add("number" if plain else "contact", f, out, pg, b, t)
+        # 3b. a quantity column left outside while the prices on the same rows are bracketed
+        if unit_qty:
+            numregs = [q for q in regs if NUMLABEL.search(q["label"])]
+            for h, col in (qty_cells(lines) if numregs else []):
+                vis = []
+                for d in col:
+                    bx = [d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]]
+                    if cover(bx, regs) >= 0.3:
+                        continue
+                    row = [d["y"] - d["h"] * 0.2, d["y"] + d["h"] * 1.2]
+                    if any(q["r"][1] <= row[0] + d["h"] * 0.6 and q["r"][3] >= row[1] - d["h"] * 0.6 for q in numregs):
+                        vis.append(d)
+                if vis and len(vis) >= max(1, len(col) // 3):
+                    u = P.union([[d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]] for d in vis])
+                    add("qty", f, out, pg, u, f"the quantities under '{h['t'].strip()[:20]}' are visible ("
+                        + ", ".join(d["t"].strip() for d in vis[:8]) + ") while the prices in the same rows are bracketed")
         # 4. seals proposed automatically but not bracketed; handwriting candidates (information only)
         for q in p["auto"]:
             r = q["r"]
@@ -362,6 +624,12 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
                 add("seal", f, out, pg, r, f"{q['src']} {_inside_text(lines, r)}")
             elif q["src"] == "hand?" and cover(r, regs) < 0.5:
                 add("hand", f, out, pg, r, "handwriting candidate not bracketed", tier="info")
+        # 4b. faint marks at the page edge that are not text: a grey cross-page seal has no colour to detect it by
+        for b in ink.get((f, str(pg)), []):
+            if seals.edge_seal_like(b) and cover(b["r"], regs) < 0.5 \
+                    and not any(cover(b["r"], [{"r": q["r"]}]) > 0.5 for q in p["auto"] if q["src"].startswith("seal")):
+                add("seal", f, out, pg, b["r"], "faint mark at the page edge that is not text - a cross-page seal fragment? "
+                    "zoom in (bpi.py page) and read it")
         # 5. QR codes / barcodes
         for c in cds_by[f].get(int(pg), []):
             if cover(c["r"], regs) < 0.6:
@@ -388,6 +656,18 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
                     mine.append(t)                # a name / address line of the submitter, not a sentence mentioning it
             if mine:
                 add("own", f, out, pg, r, f"'{label[:40]}' covers the submitter's own details: " + " | ".join(mine)[:90])
+            if NUMLABEL.search(label) and not NOT_NUMLABEL.search(label):
+                # a bracket for numbers only: item names, specifications and column headings do not belong inside
+                wordy = []
+                for d in inside:
+                    t = d["t"].strip()
+                    al = re.findall(r"[A-Za-z一-鿿]", t)
+                    if len(al) >= 4 and len(al) >= 0.6 * len(re.findall(r"\w", t)) and not UNITWORD.match(t) \
+                            and not P.WORDS_NUM.search(t) and not P.CN_WORDS.search(t) and not P.PRICE_HDR.search(t):
+                        wordy.append(t)
+                if len(wordy) >= 12 and len(wordy) >= 0.3 * len(inside):
+                    add("wide", f, out, pg, r, f"'{label[:40]}' also covers {len(wordy)} lines of descriptive text out of {len(inside)} "
+                        f"(e.g. '{wordy[0][:30]}', '{wordy[1][:30]}') - bracket the number columns only")
             area = (r[2] - r[0]) * (r[3] - r[1])
             if area >= WIDE:
                 add("wide", f, out, pg, r, f"one bracket ('{label[:40]}') covers {area * 100:.0f}% of the page and {len(inside)} text lines")
@@ -609,8 +889,8 @@ def gate_unit(cfg, key, folder, codes=True):
     res.append((ok_sheets, "Public sheets generated from the current build", f"bpi.py pubsheets {key}"))
     v = cfg.state().get("viewed", {}).get(key)
     ok_v = bool(ok_sheets and v and v["sheets"] == len(sheets) and v["time"] >= max(s.stat().st_mtime for s in sheets))
-    res.append((ok_v, "every Public sheet looked at", f"look at all {len(sheets)} images in {pd}, then: bpi.py viewed {key} {len(sheets)}"
-                if ok_sheets else f"after bpi.py pubsheets {key}: look at every image, then bpi.py viewed {key} N"))
+    res.append((ok_v, "every Public sheet looked at", f"look at all {len(sheets)} images in {pd}, then: bpi.py viewed {key} CODE CODE ... "
+                f"(the code shown on each image)" if ok_sheets else f"after bpi.py pubsheets {key}: look at every image, then bpi.py viewed {key} CODE ..."))
     return res
 
 
@@ -634,14 +914,25 @@ def cmd_gate(args):
 
 def cmd_viewed(args):
     cfg = C.Cfg()
-    if len(args) != 2 or not args[1].isdigit():
-        raise SystemExit("usage: bpi.py viewed KEY N   (N = number of Public sheet images you have looked at)")
+    if len(args) < 2:
+        raise SystemExit("usage: bpi.py viewed KEY CODE [CODE ...]   (the code printed in the top right corner of EVERY Public "
+                         "sheet image, in any order)")
     key, folder = cfg.unit(args[0])
-    sheets = sorted((cfg.work / "pub" / key).glob("pub_*.png"))
+    pd = cfg.work / "pub" / key
+    sheets = sorted(pd.glob("pub_*.png"))
     if not sheets:
         raise SystemExit(f"no Public sheets for {key} - run: bpi.py pubsheets {key}")
-    if int(args[1]) != len(sheets):
-        raise SystemExit(f"unit {key} has {len(sheets)} Public sheet images; all of them must be looked at (you said {args[1]})")
+    cj = pd / "codes.json"
+    if not cj.exists():
+        raise SystemExit(f"these Public sheets were made by an older version - run: bpi.py pubsheets {key}")
+    cd = json.loads(cj.read_text(encoding="utf-8"))
+    given = {hashlib.sha1((cd["salt"] + a.strip().upper()).encode()).hexdigest() for a in args[1:]}
+    ok = given & set(cd["hashes"])
+    if len(ok) != len(cd["hashes"]) or len(given) != len(ok):
+        raise SystemExit(f"unit {key} has {len(sheets)} Public sheet images; {len(ok)} of the codes given are right"
+                         + (f", {len(given) - len(ok)} wrong" if len(given) > len(ok) else "")
+                         + ". Open every image in " + str(pd) + " and read the code in its top right corner. If you cannot "
+                           "view images, say so to the user: the visual check must then be done by a person.")
     st = cfg.state()
     st.setdefault("viewed", {})[key] = {"sheets": len(sheets), "time": time.time()}
     cfg.save_state(st)

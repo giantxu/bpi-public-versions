@@ -88,3 +88,40 @@ def handwriting_boxes(page, text_boxes, dpi=50):
             continue
         out.append([x0 / W - .006, y0 / H - .006, x1 / W + .006, y1 / H + .006])
     return out
+
+
+def ink_boxes(page, text_boxes, dpi=60, cell=5):
+    """Everything on a scanned page that is ink but not recognised text and not a table rule: seals (also faint
+    grey ones), signatures, stamps, logos, handwriting, text the OCR missed.
+    -> [{"r": box, "dens": share of the box that is ink, "mean": mean grey of the ink (255 = white)}]"""
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width).astype(int)
+    H, W = a.shape
+    m = a < int(np.median(a)) - 18                 # anything clearly darker than the paper
+    for b in text_boxes:
+        x0, y0, x1, y1 = int((b[0] - .006) * W), int((b[1] - .004) * H), int((b[2] + .006) * W) + 1, int((b[3] + .004) * H) + 1
+        m[max(0, y0):y1, max(0, x0):x1] = False
+    dark = a < 150
+    m[dark.sum(1) > W * 0.15, :] = False           # table rules
+    m[:, dark.sum(0) > H * 0.15] = False
+    gh, gw = H // cell, W // cell
+    g = m[:gh * cell, :gw * cell].reshape(gh, cell, gw, cell).sum((1, 3))
+    out = []
+    for x0, y0, x1, y1, _ in _components(g >= 3):
+        w, h = (x1 - x0) / gw, (y1 - y0) / gh
+        sub = m[y0 * cell:y1 * cell, x0 * cell:x1 * cell]
+        ink = int(sub.sum())
+        if w < 0.03 or h < 0.02 or ink < 60:
+            continue
+        out.append({"r": [round(float(max(0, x0 / gw - .004)), 4), round(float(max(0, y0 / gh - .004)), 4),
+                          round(float(min(1, x1 / gw + .004)), 4), round(float(min(1, y1 / gh + .004)), 4)],
+                    "dens": round(float(ink / max(1, sub.size)), 3), "mean": int(a[y0 * cell:y1 * cell, x0 * cell:x1 * cell][sub].mean())})
+    return out
+
+
+def edge_seal_like(b):
+    """a faint, sparse mark at the left / right page edge: what a cross-page seal fragment looks like"""
+    r = b["r"]
+    w, h, cx = r[2] - r[0], r[3] - r[1], (r[0] + r[2]) / 2
+    return (cx < 0.12 or cx > 0.88) and 0.025 <= w <= 0.16 and 0.04 <= h <= 0.30 and b["dens"] <= 0.40 \
+        and b["mean"] >= 140 and r[1] > 0.03 and r[3] < 0.97
