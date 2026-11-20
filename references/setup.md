@@ -31,3 +31,7 @@ Step-by-step guide: `docs/windows-install.md` in the repository (Chinese: `docs/
   OCR is cached, so it runs once per matter.
 - LibreOffice cannot run two conversions at the same time with the same profile – convert Word files once
   (`bpi.py propose all` does it) before starting parallel reviewers.
+
+QR codes / barcodes (optional, used by `bpi.py audit`): detected with the macOS Vision framework when `swiftc` is
+available, otherwise with OpenCV if installed (`pip install opencv-python-headless`); without either, check codes by
+eye on the Public sheets.

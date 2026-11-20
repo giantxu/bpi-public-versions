@@ -13,103 +13,115 @@ You turn a folder of exhibit documents into two parallel sets:
   in place with a short summary label inside ("Supplier name and address", "Quantities, unit prices and amounts"),
   and a "PUBLIC VERSION" header on every page.
 
-The hard part is not the drawing – `scripts/bpi.py` does that – it is deciding, page by page, exactly what is
-confidential, consistently across hundreds of scanned pages in two languages, and proving nothing leaked.
-The workflow below scales to thousands of pages across dozens of folders. Follow its order: agreeing the rules and
-showing samples before the full run is what keeps rework small.
+The drawing is done by `scripts/bpi.py`. Your work is deciding, page by page, exactly what is confidential,
+consistently across hundreds of pages in two languages – and proving that nothing leaked. A Public version with
+one visible supplier name or account number is a failed job, however many pages are right.
+
+## Working rules (they matter more than speed)
+
+1. **Done means `bpi.py gate KEY` prints PASS.** Not "the files were generated", not "qa shows 0". Never report a
+   unit as finished without pasting its gate output. If you cannot get a unit through the gate, say so and say why.
+2. **When unsure what to do next, run `bpi.py next`.** It names the next step and the command.
+3. **Small batches, finished one at a time.** Take the smallest unit, bring it to gate PASS, then the next. Do not
+   start volume work, and do not hand units to parallel helpers, before one unit has passed the gate and the user
+   has approved samples.
+4. **Place brackets by text, not by eye, wherever there is text** (`text`, `after`, `span`, `lines`, `table` edits).
+   Coordinates read off a picture are easily one line or a few characters off, and a bracket that is off leaks.
+   Use rectangles only for what has no text (signatures, seals, logos) and read them off `bpi.py page` (zoomed).
+5. **Check what you wrote before you build:** `bpi.py check KEY`, then `bpi.py boxes KEY FILE PAGE` shows the text
+   each bracket really covers.
+6. **Three leak checks, all required, none replaces another:** `audit` (text cut by a bracket edge, sensitive text
+   outside every bracket), `qa` (re-OCR of the Public files), and looking at every Public page yourself.
+7. **Never silence a finding.** Fix it, or `ack` it with the true reason why the item is public. Acknowledged
+   items go into your report.
+8. Commands that write need an explicit unit key (`build 205`, not `build`). Work only on the units you were given.
 
 ## 0. Tools
 
-All commands run from the **matter folder** (the folder that will hold `bpi_config.json`):
+All commands run from the **matter folder** (the folder that holds `bpi_config.json`):
 
 ```
-python <skill>/scripts/bpi.py <command> ...
+python <skill>/scripts/bpi.py <command> ...        (python3 on macOS/Linux, python or py on Windows)
 ```
 
-(`python3` on macOS/Linux, `python` or `py` on Windows.) Commands: `init doctor survey ocr parties propose sheets
-lines build qa log status` – run `bpi.py` without arguments for help. Dependencies and Windows notes:
-`references/setup.md`. Config keys: `references/config.md`.
+Run `bpi.py` without arguments for the command list. Dependencies and Windows notes: `references/setup.md`.
+Config keys: `references/config.md`.
 
 ## 1. Understand the governing requirements
 
 Read the user's instruction document (RFI, questionnaire, APO instructions) completely. Requirement documents often
 contain **scanned example pages** (e.g. CBP RFI Appendix II "Public Version Examples") – render those pages to images
-and look at them; text extraction returns garbage for them, and they show the expected look (what was bracketed,
-how the summary labels read, where "PUBLIC VERSION" sits). Summarise for the user: bracket style (single vs double
-brackets), what must always be bracketed (account numbers, tax IDs, personal identifiers), what can never be
-bracketed, labelling and certification requirements. `references/requirements.md` has the CBP EAPA essentials.
+and look at them; text extraction returns garbage for them, and they show the expected look. Summarise for the
+user: bracket style (single vs double brackets), what must always be bracketed (account numbers, tax IDs, personal
+identifiers), what can never be bracketed, labelling and certification requirements.
+`references/requirements.md` has the CBP EAPA essentials.
 
-## 2. Survey the exhibits
+## 2. Set up and survey
 
-`bpi.py init` (then edit `bpi_config.json`: source folder, output folders, header text, and `own_company_regex` – the
-submitting company's own names/address/phone, which must stay public), `bpi.py doctor`, then `bpi.py survey`.
-Also look at a few pages of each document type yourself. Report to the user, besides counts:
-- files that are not what their name says (e.g. a "translation .pdf" that is actually a saved web page / chat log –
-  it must not be submitted);
-- byte-identical duplicates (within or across folders), translations without originals, partial documents;
-- who the counterparties are (suppliers, contractors, forwarders, consultants) – `bpi.py parties` after OCR.
+`bpi.py init`, then edit `bpi_config.json`: source folder, output folders, header text and the four `own_*` keys
+(the submitting company's own names / address / phone, its document-code prefixes, the words on its seal, its seal
+colour – all of that stays public). Then `bpi.py doctor`, `bpi.py survey`, `bpi.py ocr`.
+Look at a few pages of each document type yourself. Report to the user, besides counts:
+- files that are not what their name says (a "translation .pdf" that is a saved web page – must not be submitted);
+- byte-identical duplicates, translations without originals, partial documents;
+- who the counterparties are (suppliers, contractors, forwarders, consultants).
+
+**Supplier terms** (`_work/terms.json`: `{"*": [[regex, label], ...], "KEY": [...]}`, or `_work/terms_KEY.json`).
+`bpi.py parties` lists company-like names. Write one tolerant regex per counterparty, **anchored on a short
+distinctive fragment** of its name ("NORTHSTAR", not the full "QINGDAO NORTHSTAR HEAVY INDUSTRY CO., LTD" – OCR
+misreads letters: "QINGDA0", "INDUSTKY"), plus its abbreviations, address fragments, post code, phone. Labels starting with
+"Supplier name" bracket short name/address lines from after their "Seller:" style label to the end of the line.
+Then run `bpi.py terms-check` and repeat until every counterparty in its list is matched: every name the terms
+miss becomes manual work and leak risk on every page it appears on.
 
 ## 3. Agree the bracketing rules with the user before doing volume work
 
 Propose the default rule set in `references/bracketing-rules.md` and ask the user to decide the open points listed
-there (supplier identity, quantities, invoice numbers containing supplier abbreviations, whole clause vs numbers only,
-output format for Word files, the company's own staff names...). Write the agreed rules into
-`_work/rules.md` in the matter folder – every later step and every reviewer works from that file.
+there. Write the agreed rules into `_work/rules.md` – every later step and every reviewer works from that file.
 
 ## 4. Samples first
 
-Pick ~5 files that cover the variety (single-page scanned invoice, long bilingual contract with rotated price
-tables, price appendix, Word translation, born-digital PDF). Run the full pipeline on them (steps 5–7) into a
-samples folder and let the user review the BPI and Public PDFs. Adjust rules, then go to volume.
+Take up to three small units that cover the variety (scanned invoice, bilingual contract with price tables, Word
+translation, born-digital PDF). Bring each through step 5 to gate PASS and give the user the BPI and Public files
+to review. Adjust `_work/rules.md` to the feedback. Only then record the approval – `bpi.py samples-ok "<what the
+user said>"` – which unlocks building further units. Do not run it on your own authority.
 
-## 5. Volume pipeline (per unit = per sub-folder)
+## 5. One unit, start to gate
 
 ```
-bpi.py ocr                     # once, all scanned pages (cached in _work/ocr)
-bpi.py parties                 # -> write supplier regexes into _work/terms.json (see below)
-bpi.py propose all             # automatic proposals -> _work/auto
-bpi.py sheets KEY              # contact sheets -> _work/sheets/KEY/sheet_###.png (+ index.txt)
-# look at EVERY sheet, write _work/review/KEY.json, re-run sheets until right
-bpi.py build KEY
-bpi.py qa KEY                  # OCR leak check - must end with 0 issues or every hit explained
-bpi.py pubsheets KEY           # look at EVERY Public page - catches what OCR cannot read
-bpi.py log                     # BCI log spreadsheet
+bpi.py propose KEY                 # automatic proposals -> _work/auto
+bpi.py sheets KEY                  # contact sheets with box ids -> _work/sheets/KEY/ (+ index.txt)
+#   look at EVERY tile; page / lines to place things exactly; write _work/review/KEY.json
+bpi.py check KEY                   # the edit file applies cleanly?  then: boxes KEY FILE PAGE
+bpi.py build KEY                   # BPI + Public PDFs (build KEY "file.pdf" for one file)
+bpi.py audit KEY                   # fix or acknowledge every finding; rebuild what you changed
+bpi.py qa KEY                      # fix real leaks, acknowledge verified false positives
+bpi.py pubsheets KEY               # look at EVERY Public sheet; then: bpi.py viewed KEY N
+bpi.py gate KEY                    # PASS = unit finished
 ```
 
-**Supplier terms** (`_work/terms.json`, `{"*": [[regex, label], ...], "KEY": [...]}`, or `_work/terms_KEY.json`):
-OCR garbles names (similar-looking characters swapped, "Engincering" for "Engineering"), so write tolerant regexes, include abbreviations used in invoice
-numbers, addresses, post codes, phone numbers and the company's English and Chinese names. Labels starting with
-"Supplier name" make short name/address lines bracket from after their "卖方：" style label to the end of line.
+The edit format, the box colours, what to look for on a page and how to read audit / qa findings are in
+`references/review-guide.md` – read it before the first review. The automatic proposals catch names, amounts, bank
+lines, clauses with percentages, seals and handwriting candidates, but they miss and over-catch: reviewing every
+page is the real work. For long files work in page ranges (`"2-27": {...}`) and rebuild file by file.
 
-**Review is the real work.** The automatic proposals catch names, amounts, bank lines, price columns, seals and
-handwriting candidates, but they miss and over-catch. Look at every page; the edit format, the colour legend, the
-most common corrections and how to place precise boxes are in `references/review-guide.md` – read it before the
-first review. Prefer text-anchored `span` edits (exact) over eyeballed rectangles; use `bpi.py lines` to get anchors.
+**Large matters:** only after samples are approved, and only if helpers can each finish what they are given.
+`references/reviewer-brief.md` says how to size assignments (one unit each, restricted with `BPI_UNITS`), what to
+tell reviewers and how to check what comes back. Otherwise go unit by unit with `bpi.py next`.
 
-**Large jobs:** split units across parallel reviewers (one review file per unit, nobody edits `scripts/`, the
-shared terms file or another unit's file). Give each the brief in `references/reviewer-brief.md` plus the path to
-`_work/rules.md`. When they report back, check their QA, read their judgement calls, harmonise inconsistencies
-between reviewers (the same clause type must get the same treatment everywhere), rebuild what you change, and run
-`bpi.py status` to catch units whose review was edited after their last build.
+## 6. Before saying "done"
 
-## 6. Quality gates before saying "done"
-
-- `bpi.py pubsheets all` and look at **every** Public page yourself (or have each reviewer do it for their units).
-  OCR-based QA cannot see stamps, seal fragments, faint table columns or overlay totals; the leaks a client finds
-  are almost always of this kind (see "Final visual check" in `references/review-guide.md`).
-- `bpi.py qa all` re-OCRs every Public page. Fix real leaks; for each remaining hit verify it on the rendered page and
-  explain it (typical false positives: a bracketed price "240.00" equals a public postcode "24000"; a public title's
-  digits contain a bracketed number; a generic equipment name matches a supplier regex).
-- `bpi.py status` – nothing stale, page counts equal (qa checks), every file built.
-- Look at a random sample of Public pages from every reviewer.
-- Note file sizes – portals often cap uploads; offer to lower `dpi`/`jpeg_quality` or split.
+- `bpi.py status` – every unit PASS. (`bpi.py gate all` for the details.)
+- `bpi.py acks all` – read every acknowledgement once more; anything not clearly public is a leak.
+- Consistency across units: the same clause type treated the same way everywhere (original and translation too).
+- Note file sizes – portals often cap uploads; offer to lower `dpi` / `jpeg_quality` or to split.
 
 ## 7. Report to the user
 
-Deliver: the two output folders, `BCI Log.xlsx` (one row per bracket with category and basis – the backbone of the
-required "explanation of why each bracketed item is confidential"), and a short report: QA result with every
-remaining hit explained, the judgement calls that need the user's confirmation, duplicates / misfiled / skipped files,
-large files. Keep the report in the user's language.
+Deliver the two output folders and `BCI Log.xlsx` (`bpi.py log all` – one row per bracket with category and basis,
+the backbone of the required explanation of why each item is confidential), and a short report in the user's
+language: gate result per unit; the acknowledged findings grouped by reason; judgement calls that need the user's
+confirmation; duplicates / misfiled / skipped files; large files. State plainly anything that is not finished.
 
 ## Why the Public version is built this way
 

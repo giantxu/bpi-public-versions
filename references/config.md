@@ -15,6 +15,7 @@ Created by `bpi.py init` in the matter folder. Paths are relative to that folder
   "own_code_regex": "EXS|EXSB|CT\\d+\\w*",
   "own_seal_text_regex": "CONTRACT|123456",
   "own_seal_color": "blue",
+  "sample_units_limit": 3,
   "dpi": 200,
   "jpeg_quality": 82,
   "ocr_backend": "auto",
@@ -34,11 +35,24 @@ Created by `bpi.py init` in the matter folder. Paths are relative to that folder
   pattern). In invoice numbers any other alphabetic segment of 3+ letters is treated as a counterparty code and the
   whole number is bracketed (`invno`).
 - `own_seal_text_regex` – words readable on the submitter's own seal (registration number, "CONTRACT", …); a seal
-  whose OCR text matches it is never proposed as a supplier seal.
+  whose OCR text matches it is never proposed as a supplier seal. Keep it specific: a pattern like `\\d{6}-?[A-Z]`
+  also matches other companies' registration numbers and would hide their seals from the proposals.
+- `own_seal_color` – `"blue"`, `"red"` or `""`. Seals in that colour are shown on the review sheets as grey dashed
+  candidates (`seal-own?`) and are **not** bracketed unless the reviewer keeps them (`"keep": ["a12"]`); seals whose
+  text matches a supplier term are always proposed, whatever their colour. Leave it empty when the counterparties
+  use the same colour as often as the submitter.
+- `sample_units_limit` – the first N units (default 3) may be built freely as samples; further units only after
+  `bpi.py samples-ok "…"` records the user's approval. `0` switches the check off.
+- The `own_*` patterns are matched case-insensitively; a leading `(?i)` is accepted but not needed.
 - `dpi` / `jpeg_quality` – resolution and quality of re-rasterised Public pages (200 / 82 ≈ 0.25 MB per A4 page).
   Lower them (150 / 70) if the filing portal limits file size.
 - `ocr_backend` – `auto` picks macOS Vision on a Mac, else RapidOCR, else Tesseract. `ocr_dpi` 150 is a good balance.
 - `soffice` – path to LibreOffice if not on PATH (Windows default locations are searched automatically).
 
 Work folder layout: `ocr/` OCR cache · `auto/` proposals · `review/KEY.json` edits · `terms.json`, `terms_KEY.json`
-supplier regexes · `sheets/KEY/` contact sheets · `docxpdf/` converted Word files · `rules.md` agreed rules.
+supplier regexes · `sheets/KEY/` contact sheets · `page/KEY/` single-page views · `pub/KEY/` Public sheets ·
+`audit/`, `qa/` findings · `ack/KEY.json` acknowledged findings · `state.json` samples approval / viewed sheets ·
+`docxpdf/` converted Word files · `rules.md` agreed rules.
+
+Environment variable `BPI_UNITS=205,206` (`;` as separator when a key contains a comma) restricts a process to those
+units – set it for every parallel reviewer.

@@ -6,8 +6,20 @@ Coordinates normalized to the displayed page (top-left origin).
 import re, unicodedata
 
 # ---------------------------------------------------------------- helpers
+_NARROW, _MID, _WIDE = set(" .,:;'|!ijl()[]-`/\\\""), set("ftrI1Jszc*"), set("mwMW@%&")
+
+
 def _w(ch):
-    return 1.0 if unicodedata.east_asian_width(ch) in "WF" else 0.55
+    """approximate relative glyph width (proportional fonts): full-width / CJK = 1"""
+    if unicodedata.east_asian_width(ch) in "WF":
+        return 1.0
+    if ch in _NARROW:
+        return 0.27
+    if ch in _MID:
+        return 0.38
+    if ch in _WIDE:
+        return 0.82
+    return 0.62 if ch.isupper() else 0.5
 
 
 def is_vertical(d):
@@ -27,6 +39,28 @@ def sub_box(d, a, b, pad=0.003):
     x0 = d["x"] + fa * d["w"]
     x1 = d["x"] + fb * d["w"]
     return [x0 - pad, d["y"] - pad, x1 + pad, d["y"] + d["h"] + pad], 0
+
+
+def char_span(d, r):
+    """(a, b): the characters of line d that lie inside rect r, using the same width model as sub_box"""
+    t = d["t"]
+    tot = sum(_w(c) for c in t) or 1
+    if is_vertical(d):
+        f0, f1 = (d["y"] + d["h"] - r[3]) / d["h"], (d["y"] + d["h"] - r[1]) / d["h"]
+    else:
+        f0, f1 = (r[0] - d["x"]) / d["w"], (r[2] - d["x"]) / d["w"]
+    a = b = None
+    acc = 0.0
+    for i, c in enumerate(t):
+        mid = (acc + _w(c) / 2) / tot
+        if a is None and mid >= f0:
+            a = i
+        if mid <= f1:
+            b = i + 1
+        acc += _w(c)
+    a = len(t) if a is None else a
+    b = a if b is None or b < a else b
+    return a, b
 
 
 def line_box(d, pad=0.004):
@@ -67,7 +101,7 @@ AMOUNT_RES = [
 ]
 BANK_RE = re.compile(r"(?i)账\s*号|帐\s*号|account\s*(?:no|number|name)?|a/c|swift|iban|税\s*号|纳税人识别号|统一社会信用代码|tax\s*(?:no|id|registration)|gst\s*id|sst|开户(?:行|银行)|银行|bank|行号|routing|beneficiary")
 CONTACT_RE = re.compile(r"(?i)\btel\b|电\s*话|\bfax\b|传\s*真|e-?mail|邮\s*箱|手\s*机|mobile|phone|联系人|contact\s*person|地\s*址|address|邮\s*编|post\s*code|zip")
-PERSON_RE = re.compile(r"(?i)法定代表人|委托代理人|授权代表|代表人|负责人|经办人|联系人|项目经理|签\s*字|签\s*名|signature|signed\s*by|legal\s*(?:person|representative)|authori[sz]ed\s*(?:agent|representative|signatory)|entrusted\s*agent|salesman|attn|prepared\s*by|approved\s*by|checked\s*by|manager")
+PERSON_RE = re.compile(r"(?i)法定代表人|委托代理人|授权代表|代表人|负责人|经办人|联系人|项目经理|工程师代表|工程师|现场代表|安全员|监理|engineer|supervisor|site\s*(?:manager|representative)|safety\s*officer|签\s*字|签\s*名|signature|signed\s*by|legal\s*(?:person|representative)|authori[sz]ed\s*(?:agent|representative|signatory)|entrusted\s*agent|salesman|attn|prepared\s*by|approved\s*by|checked\s*by|manager")
 PAY_RE = re.compile(r"(?i)付款|支付|预付|进度款|结算款|尾款|质保金|保证金|保修金|履约|定金|货款|payment|advance|retention|warranty\s*(?:bond|money|deposit)|deposit|instal(?:l)?ment|balance")
 LD_RE = re.compile(r"(?i)违约金|扣罚|罚款|赔偿.*%|liquidated|penalt")
 PCT_RE = re.compile(r"\d+(?:\.\d+)?\s*[%％‰]|百分之|千分之|万分之|[一二三四五六七八九十]成|per\s*cent")
@@ -77,7 +111,7 @@ NUMERIC = re.compile(r"^[\s¥￥$]*[-+]?(?:\d{1,3}(?:[,，]\d{3})+|\d+)(?:[.．]
 
 
 NUMW = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|cents?)"
-WORDS_START = re.compile(r"(?i)\bsay\b|\b(?:(?:china\s*)?yuan|rmb|renminbi|us\s*dollars?|dollars?|ringgit(?:\s*malaysia)?|usd)\s+" + NUMW + r"\b|\b" + NUMW + r"(?:[\s,\-]+(?:and\s+)?" + NUMW + r")*[\s\-]+(?:(?:china\s*)?yuan|rmb|dollars?|ringgit)?\s*only\b")
+WORDS_START = re.compile(r"(?i)\bsay\b|\bin\s*words\b|\b(?:(?:china\s*)?yuan|rmb|renminbi|us\s*dollars?|dollars?|ringgit(?:\s*malaysia)?|usd)\s+" + NUMW + r"\b|\b" + NUMW + r"(?:[\s,\-]+(?:and\s+)?" + NUMW + r")*[\s\-]+(?:(?:china\s*)?yuan|rmb|dollars?|ringgit)?\s*only\b")
 WORDS_NUM = re.compile(r"(?i)\b" + NUMW + r"\b")
 CN_WORDS = re.compile(r"大\s*写\s*[:：)）]?\s*[^，,。；;（(\s][^，,。；;（(]*|(?:人民币|美元|马币|林吉特)?[零壹贰叁肆伍陆柒捌玖拾佰仟万亿][零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整正]{2,}[元圆整正)）]*")
 INVNO_RE = re.compile(r"(?i)\b(?:invoice|inv\.)\s*(?:no\b|n[o0º°®]|№|number|ne\b|nd\b|nc\b|ng\b)?\s*\.?\s*[:：.;；]?\s*((?-i:[A-Z0-9][A-Z0-9\-–•·_/.:]{4,}[A-Z0-9]))")

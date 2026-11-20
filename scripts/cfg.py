@@ -26,14 +26,27 @@ DEFAULTS = {
     "own_company_regex": "(?!x)x",
     "own_code_regex": "(?!x)x",
     "own_seal_text_regex": "(?!x)x",
-    # colour of the submitting company's own seal ("blue" / "red" / ""), used only for review hints
+    # colour of the submitting company's own seal ("blue" / "red" / ""). Seals of that colour are shown
+    # as candidates on the review sheets but are NOT bracketed unless the reviewer keeps them.
     "own_seal_color": "",
+    # the first N units may be built freely (samples); more only after `bpi.py samples-ok` (0 = no limit)
+    "sample_units_limit": 3,
     "dpi": 200,
     "jpeg_quality": 82,
     "ocr_backend": "auto",          # auto | vision | rapidocr | tesseract
     "ocr_dpi": 150,
     "soffice": "",                   # path to LibreOffice soffice; empty = search PATH / default locations
 }
+
+
+def clean_rx(p):
+    """drop a leading inline flag group such as (?i) so patterns can be combined safely"""
+    return re.sub(r"^\s*\(\?[aiLmsux]+\)", "", p or "")
+
+
+def rx_join(*pats):
+    """one case-insensitive regex matching any of the given patterns"""
+    return re.compile("|".join(f"(?:{clean_rx(p)})" for p in pats if p), re.I)
 
 
 def find_config():
@@ -59,7 +72,11 @@ class Cfg:
         self.work = self.root / data["work_dir"]
         self.out_bpi = self.root / data["out_bpi"]
         self.out_pub = self.root / data["out_public"]
-        self.own_re = re.compile(data["own_company_regex"], re.I)
+        try:
+            self.own_re = rx_join(data["own_company_regex"])
+            rx_join(data["own_code_regex"]); rx_join(data["own_seal_text_regex"])
+        except re.error as e:
+            raise SystemExit(f"bpi_config.json: invalid regular expression in an own_* key: {e}")
         self.work.mkdir(parents=True, exist_ok=True)
 
     def __getitem__(self, k):
@@ -91,6 +108,24 @@ class Cfg:
     def out_dir(self, root, folder):
         return root if folder == "." else root / folder
 
+    # ------------------------------------------------------------------ state / restrictions
+    def state(self):
+        p = self.work / "state.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def save_state(self, st):
+        (self.work / "state.json").write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def may_write(self, key):
+        """environment variable BPI_UNITS=205,206 restricts this process to those units (unset = all).
+        Give each parallel reviewer its own BPI_UNITS so nobody can overwrite another reviewer's units.
+        Use ";" as separator when a unit key itself contains a comma."""
+        env = os.environ.get("BPI_UNITS", "").strip()
+        if not env:
+            return True
+        parts = [k.strip() for k in (env.split(";") if ";" in env else env.split(","))]
+        return key in parts or key == env or ("," in key and ";" not in env and all(x in parts for x in key.split(",")))
+
     # ------------------------------------------------------------------ terms
     def terms(self, key):
         res = []
@@ -101,7 +136,14 @@ class Cfg:
         u = self.work / f"terms_{key}.json"
         if u.exists():
             res += json.loads(u.read_text(encoding="utf-8"))
-        return [tuple(x) for x in res]
+        out = []
+        for x in res:
+            try:
+                re.compile(x[0])
+            except re.error as e:
+                raise SystemExit(f"terms file: invalid regular expression {x[0]!r}: {e}")
+            out.append(tuple(x))
+        return out
 
 
 def is_pdf(p):

@@ -28,11 +28,12 @@ why each item is confidential.
 2. **Survey** the exhibits – counts, scans vs text, disguised non-PDF files, duplicates, translations without originals.
 3. **Agree the rules** with the user (supplier identity, quantities, document numbers, whole clauses vs figures …).
 4. **Samples first** – a handful of representative files for user review.
-5. **Volume pipeline** – OCR → automatic proposals (supplier terms, amounts, bank lines, price columns, payment and
-   penalty clauses, seals, handwriting) → page-by-page human-style review on contact sheets with precise text-anchored
-   edits → build.
-6. **Leak check** – every Public page is OCR'd again and searched for supplier names and bracketed numbers.
-7. **Report** – outputs, BCI log, remaining QA hits explained, judgement calls for confirmation.
+5. **Unit by unit** – OCR → automatic proposals (supplier terms, amounts, bank lines, price columns, payment and
+   penalty clauses, seals, handwriting) → page-by-page review on contact sheets with text-anchored edits → build.
+6. **Three leak checks** – a text audit (text cut by a bracket edge, sensitive text outside every bracket), a
+   re-OCR of every Public page, and a visual check of every Public page. A unit is finished only when
+   `bpi.py gate` prints PASS; findings are fixed or acknowledged with a written reason.
+7. **Report** – outputs, BCI log, gate results, acknowledged findings, judgement calls for confirmation.
 
 The skill's instructions are in [`SKILL.md`](SKILL.md); details in [`references/`](references/).
 
@@ -57,14 +58,20 @@ Windows step-by-step guide: [`docs/windows-install.md`](docs/windows-install.md)
 ## Command reference
 
 ```
-python scripts/bpi.py init | doctor | survey | ocr | parties
-python scripts/bpi.py propose KEY|all     # automatic bracket proposals
-python scripts/bpi.py sheets KEY          # review contact sheets
-python scripts/bpi.py lines KEY FILE PAGE # text lines with boxes, for precise edits
-python scripts/bpi.py build KEY|all       # BPI + Public PDFs
-python scripts/bpi.py qa KEY|all          # leak check
-python scripts/bpi.py log                 # BCI log spreadsheet
-python scripts/bpi.py status
+python scripts/bpi.py next                      # what to do next in this matter
+python scripts/bpi.py init | doctor | survey | ocr | parties | terms-check
+python scripts/bpi.py propose KEY|all           # automatic bracket proposals
+python scripts/bpi.py sheets KEY                # review contact sheets with box ids
+python scripts/bpi.py page KEY FILE PAGE        # one page, large, labelled grid (add "public" / a zoom window)
+python scripts/bpi.py lines | boxes KEY FILE [PAGE]   # numbered text lines / what each bracket covers
+python scripts/bpi.py check KEY                 # does the edit file apply cleanly?
+python scripts/bpi.py build KEY [FILE ...]      # BPI + Public PDFs
+python scripts/bpi.py audit KEY                 # text cut by a bracket, sensitive text outside brackets
+python scripts/bpi.py qa KEY                    # re-OCR leak check of the Public PDFs
+python scripts/bpi.py ack KEY ID ... -m "why"   # acknowledge a verified non-leak ; acks = list them
+python scripts/bpi.py pubsheets KEY ; viewed KEY N    # visual check of every Public page
+python scripts/bpi.py gate KEY|all              # PASS / FAIL - a unit is finished when its gate passes
+python scripts/bpi.py samples-ok "…" | log | status
 ```
 
 Configuration: [`references/config.md`](references/config.md).
@@ -91,7 +98,7 @@ submission remain the responsibility of the filer and counsel. Always review the
 - Public 版：括号内内容彻底删除（扫描页重新栅格化后涂白，电子版 PDF 真正删除文字），保留黑色括号并写入英文概括说明，每页加 “PUBLIC VERSION” 页眉，清除元数据。
 - `BCI Log.xlsx`：每个括号一行，含类别和保密理由，可作为括号说明的底稿。
 
-**流程**：理解要求文件 → 摸底附件 → 与用户确认括号口径 → 先做样例 → 批量制作（OCR、自动标注、逐页复核、生成）→ 防泄露复查 → 交付报告。
+**流程**：理解要求文件 → 摸底附件 → 与用户确认括号口径 → 先做样例 → 逐单元制作（OCR、自动标注、逐页复核、生成）→ 三重防泄露检查（文字自检 `audit`、公开版重新 OCR `qa`、逐页目视）→ `gate` 验收通过 → 交付报告。不确定下一步时运行 `bpi.py next`。
 
 **安装**：见上文 Installation；Windows 详细中文步骤见 [`docs/windows-install.zh.md`](docs/windows-install.zh.md)。
 
