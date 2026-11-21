@@ -46,6 +46,10 @@ The skill's instructions are in [`SKILL.md`](SKILL.md); details in [`references/
 
 ## Installation
 
+**Use this skill in a desktop or command-line agent client that runs on your own computer. It does not work in a
+web chat:** web chats run code in a cloud sandbox that usually cannot install the required Python packages
+(PyMuPDF), and your exhibits would have to be uploaded there.
+
 1. Python 3.9+ and packages:
    ```
    pip install pymupdf numpy openpyxl pillow rapidocr_onnxruntime
@@ -109,7 +113,7 @@ submission remain the responsibility of the filer and counsel. Always review the
 
 **流程**：理解要求文件 → 摸底附件 → 与用户确认括号口径 → 先做样例 → 逐单元制作（OCR、自动标注、逐页复核、生成）→ 三重防泄露检查（文字自检 `audit`、公开版重新 OCR `qa`、逐页目视）→ `gate` 验收通过 → 交付报告。不确定下一步时运行 `bpi.py next`。
 
-**安装**：见上文 Installation；Windows 详细中文步骤见 [`docs/windows-install.zh.md`](docs/windows-install.zh.md)。
+**安装**：本技能必须在安装于本机的客户端软件（桌面版或命令行版 AI 助手）中使用，不能在网页版中使用——网页版在云端沙盒里运行代码，通常装不上所需的 Python 包（PyMuPDF），附件也得上传到云端。安装步骤见上文 Installation；Windows 详细中文步骤见 [`docs/windows-install.zh.md`](docs/windows-install.zh.md)。
 
 **声明**：本工具仅辅助文件制作，不构成法律意见；括号认定和最终提交由提交方及其律师负责，提交前请务必复核。
 

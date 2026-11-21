@@ -55,6 +55,9 @@ python <skill>/scripts/bpi.py <command> ...        (python3 on macOS/Linux, pyth
 ```
 
 Run `bpi.py` without arguments for the command list. Dependencies and Windows notes: `references/setup.md`.
+This skill must be used in a client that runs on the user's own computer, not in a web chat. If you are running in
+a web chat's cloud sandbox, tell the user so before doing anything else: the required packages (PyMuPDF) usually
+cannot be installed there, and the exhibits would have to be uploaded.
 Config keys: `references/config.md`.
 
 ## 1. Understand the governing requirements
