@@ -1,6 +1,6 @@
 ---
 name: bpi-public-versions
-description: Prepare bracketed BPI / business-confidential versions and redacted Public versions of exhibit documents (scanned contracts, invoices, purchase orders, price lists, Word translations) for US trade proceedings - CBP EAPA requests for information (19 C.F.R. 165.4), Commerce/ITC antidumping and countervailing questionnaires, APO filings. Use this skill whenever the user wants to "make BPI and Public versions", bracket business confidential information, prepare a public version of an exhibit or attachment, redact supplier names / prices / bank accounts in a submission, or mentions BPI, BCI, BPI版, Public版, 公开版, 保密版, 括号, 打括号, 涂白 or 公开版本 for a set of PDFs - even if they only say "do the exhibits like last time".
+description: Prepare bracketed BPI / business-confidential versions and redacted Public versions of exhibit documents, or the Public version of a BPI file someone else has already bracketed (scanned contracts, invoices, purchase orders, price lists, Word translations) for US trade proceedings - CBP EAPA requests for information (19 C.F.R. 165.4), Commerce/ITC antidumping and countervailing questionnaires, APO filings. Use this skill whenever the user wants to "make BPI and Public versions", bracket business confidential information, prepare a public version of an exhibit or attachment, redact supplier names / prices / bank accounts in a submission, or mentions BPI, BCI, BPI版, Public版, 公开版, 保密版, 括号, 打括号, 涂白 or 公开版本 for a set of PDFs - even if they only say "do the exhibits like last time".
 ---
 
 # BPI / Public versions of exhibit documents
@@ -127,7 +127,16 @@ tell reviewers and how to check what comes back. Otherwise go unit by unit with 
 - Consistency across units: the same clause type treated the same way everywhere (original and translation too).
 - Note file sizes – portals often cap uploads; offer to lower `dpi` / `jpeg_quality` or to split.
 
-## 7. Report to the user
+## 7. Public version of a BPI file bracketed by someone else
+
+When the user supplies a finished BPI file and asks only for the Public version, read
+`references/from-bpi.md` first. The work is finding every bracket the preparer drew – annotations of any type
+(stamps too), paths, typed "[ ]" (also in custom-encoded fonts and over several lines), and marks baked into
+scanned or flattened page images (often corner marks "┌ … ┘") – and erasing exactly what lies between them.
+Survey all bracket forms in the whole file before building; never move an erase edge inward on a scan; look at
+every page the build left unchanged, because unrecognised bracket forms hide there.
+
+## 8. Report to the user
 
 Deliver the two output folders and `BCI Log.xlsx` (`bpi.py log all` – one row per bracket with category and basis,
 the backbone of the required explanation of why each item is confidential), and a short report in the user's

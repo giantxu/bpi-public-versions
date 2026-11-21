@@ -172,6 +172,8 @@ identity, price, quantity, amount, account / tax number, personal name, signatur
 penalty term is a leak: fix, rebuild that file, regenerate, look again. Every image shows a code in its top right
 corner; record the check with all of them: `bpi.py viewed KEY CODE CODE …`. If you cannot view images, do not
 guess: tell the user that the visual check of this unit has to be done by a person.
+Also open the Public pages that carry no bracket at all: a page that should have one and does not is a leak no
+text check reports.
 
 `bpi.py gate KEY` checks all of this (clean edit file, fresh build, no open audit / qa findings, Public sheets
 newer than the build and their codes entered) and prints PASS or FAIL with the next command. **A unit is done when

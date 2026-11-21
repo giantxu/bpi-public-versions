@@ -136,6 +136,9 @@ def make_public(src, dst, spec, mode="scan"):
     sdoc = fitz.open(src)
     if mode == "text":
         doc = sdoc
+        # comments, stamps and other annotations become page content first, so that the redaction below also
+        # removes whatever of them lies inside a bracket (a sticky note or stamp is otherwise carried over intact)
+        doc.bake(annots=True, widgets=True)
         for i, page in enumerate(doc):
             for reg in spec.get(i + 1, []):
                 r = _abs(page, reg["r"])
@@ -160,4 +163,12 @@ def make_public(src, dst, spec, mode="scan"):
             _label(page, r, reg["label"], reg.get("rot", 0))
         _header(page, public=True)
     doc.set_metadata({})
+    # bookmarks and attached files of the source often name the counterparty: the Public file carries none
+    doc.set_toc([])
+    for name in list(doc.embfile_names()):
+        doc.embfile_del(name)
+    try:
+        doc.del_xml_metadata()
+    except Exception:
+        pass
     doc.save(dst, garbage=4, deflate=True, clean=True)

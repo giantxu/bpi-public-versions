@@ -38,6 +38,10 @@ why each item is confidential.
    `bpi.py gate` prints PASS; findings are fixed or acknowledged with a written reason.
 7. **Report** – outputs, BCI log, gate results, acknowledged findings, judgement calls for confirmation.
 
+A Public version can also be made from a BPI file someone else has bracketed: see
+[`references/from-bpi.md`](references/from-bpi.md) for the bracket forms to look for (annotations of any type,
+typed brackets, marks baked into scanned pages) and the checks that catch the ones a detector misses.
+
 The skill's instructions are in [`SKILL.md`](SKILL.md); details in [`references/`](references/).
 
 ## Installation
@@ -100,6 +104,8 @@ submission remain the responsibility of the filer and counsel. Always review the
 - BPI 版：原件不动，所有保密信息加红色单括号，每页加 “BUSINESS CONFIDENTIAL” 页眉。
 - Public 版：括号内内容彻底删除（扫描页重新栅格化后涂白，电子版 PDF 真正删除文字），保留黑色括号并写入英文概括说明，每页加 “PUBLIC VERSION” 页眉，清除元数据。
 - `BCI Log.xlsx`：每个括号一行，含类别和保密理由，可作为括号说明的底稿。
+
+已有他人括好的 BPI 文件、只需制作 Public 版时，见 [`references/from-bpi.md`](references/from-bpi.md)：括号可能是各种批注（包括图章）、打出来的方括号（含特殊编码字体、跨行）、或拍进扫描图片里的拐角标记，需先全文清点括号形式，并逐页查看未改动的页面。
 
 **流程**：理解要求文件 → 摸底附件 → 与用户确认括号口径 → 先做样例 → 逐单元制作（OCR、自动标注、逐页复核、生成）→ 三重防泄露检查（文字自检 `audit`、公开版重新 OCR `qa`、逐页目视）→ `gate` 验收通过 → 交付报告。不确定下一步时运行 `bpi.py next`。
 

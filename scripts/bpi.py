@@ -667,6 +667,8 @@ def cmd_qa(args):
             pub, src, bpi = fitz.open(pubp), fitz.open(path), fitz.open(bpip)
             if len(pub) != len(src) or len(bpi) != len(src):
                 hit("qa-build", out, 0, "page count differs from source"); continue
+            if pub.get_toc() or pub.embfile_count() or any(True for pg in pub for _ in (pg.annots() or [])):
+                hit("qa-build", out, 0, "Public file still has bookmarks, attached files or annotations - rebuild it")
             for i, page in enumerate(pub):
                 if cfg["public_header"].split()[0] not in page.get_text():
                     hit("qa-build", out, i + 1, "public header missing")
