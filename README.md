@@ -66,6 +66,84 @@ web chat:** web chats run code in a cloud sandbox that usually cannot install th
 
 Windows step-by-step guide: [`docs/windows-install.md`](docs/windows-install.md) (中文版: [`docs/windows-install.zh.md`](docs/windows-install.zh.md)).
 
+### Let an agent install it
+
+Paste this prompt into the agent that should install the skill. It installs the skill, every Python package and
+program the scripts need, and checks the result with a smoke test.
+
+```text
+Install the agent skill "bpi-public-versions" from https://github.com/giantxu/bpi-public-versions so that it is fully usable: the skill files AND every program and Python package its scripts need. Do not stop until the verification in step 7 passes, and do not report success on the basis of "files copied".
+
+0. Check the environment first.
+   This skill runs Python scripts on local files. It must be installed in a client that runs on my own computer (desktop or command-line agent). If you are running in a web chat's cloud sandbox, stop and tell me; do not try to work around it.
+   Report: the OS, the Python version (`python --version` / `python3 --version` / `py --version`), and the folder your client loads skills from.
+
+1. Get the skill.
+   Clone or download the repository into your skills folder. The folder must be named exactly `bpi-public-versions`, and `SKILL.md` must sit directly inside it (not in a nested subfolder). Example:
+   git clone https://github.com/giantxu/bpi-public-versions.git "<skills folder>/bpi-public-versions"
+   If git is not available, download https://github.com/giantxu/bpi-public-versions/archive/refs/heads/main.zip, unzip it, and rename the folder `bpi-public-versions-main` to `bpi-public-versions`.
+   From here on, <skill> means the full path of that folder.
+
+2. Python.
+   Python 3.9 or newer is required. If it is missing or older, install a current Python 3 (Windows: from python.org with "Add python.exe to PATH" ticked, or `winget install Python.Python.3.12`; macOS: `brew install python`).
+   Use ONE interpreter for everything below, and install packages with `<that python> -m pip install ...`, never with a bare `pip`, so the packages land where the scripts run.
+
+3. Python packages (all required):
+   <python> -m pip install --upgrade pymupdf numpy openpyxl pillow rapidocr_onnxruntime
+   Optional, install them too: opencv-python-headless (QR codes and barcodes). On Windows with Microsoft Word installed, also install docx2pdf (a fallback for Word conversion).
+   If pip fails (no network, proxy, permission), show me the exact error. Do not skip the package.
+
+4. OCR engine.
+   - macOS: make sure the Xcode Command Line Tools are installed (`xcode-select -p`; if missing, run `xcode-select --install` and wait for it to finish). The scripts then compile and use the macOS Vision helper automatically. Keep rapidocr_onnxruntime installed as a fallback.
+   - Windows / Linux: rapidocr_onnxruntime from step 3 is the OCR engine. Nothing else is needed.
+
+5. LibreOffice (converts .docx translations to PDF).
+   - macOS: `brew install --cask libreoffice`
+   - Windows: `winget install TheDocumentFoundation.LibreOffice`
+   - Linux: `sudo apt-get install -y libreoffice` (or your distribution's package)
+   If an install needs administrator rights or my confirmation, ask me rather than skipping it. Afterwards check that `soffice --version` works. On Windows, if it is not on PATH, confirm that C:\Program Files\LibreOffice\program\soffice.exe exists.
+
+6. Windows only: set the user environment variable PYTHONUTF8=1, so that Chinese text in paths and output does not break.
+
+7. Verify. All of the following must succeed.
+   a) Byte-compile every script: <python> -m compileall -q "<skill>/scripts"  (no errors)
+   b) In a new empty test folder (not inside the skill folder):
+      <python> "<skill>/scripts/bpi.py" init
+      <python> "<skill>/scripts/bpi.py" doctor
+      Expected: [ok] for pymupdf, numpy, openpyxl and pillow; "[ok] OCR backend: vision" (macOS) or "rapidocr" (Windows/Linux); "[ok] LibreOffice: <path>"; and the last line "ready". "[missing] source folder" is expected at this point and is fine.
+   c) OCR smoke test. Save this as smoke_test.py in the test folder and run `<python> smoke_test.py "<skill>"` from that folder:
+
+      import os, sys
+      skill = sys.argv[1]
+      sys.path.insert(0, os.path.join(skill, "scripts"))
+      import fitz, cfg as C, ocr
+      doc = fitz.open(); page = doc.new_page()
+      page.insert_text((72, 100), "Invoice No. INV-2025-0042  Total USD 12,345.67", fontsize=14)
+      page.insert_text((72, 140), "供应商名称 测试有限公司", fontsize=14, fontname="china-s")
+      scan = fitz.open(); sp = scan.new_page(width=page.rect.width, height=page.rect.height)
+      sp.insert_image(sp.rect, pixmap=page.get_pixmap(dpi=200))   # image-only page, like a scan
+      cfg = C.Cfg()
+      print("backend:", ocr.pick_backend(cfg))
+      text = " ".join(l["t"] for l in ocr.ocr_page(cfg, sp))
+      print("ocr:", text)
+      ok = ("12,345.67" in text.replace(" ", "")) and ("测试" in text)
+      print("SMOKE TEST", "PASS" if ok else "FAIL")
+
+      Expected last line: SMOKE TEST PASS (the English and the Chinese line both recognised).
+   d) Word conversion: create a small text file test.txt and run
+      soffice --headless --convert-to pdf --outdir . test.txt
+      A test.pdf must appear.
+   e) Confirm that the skill appears in your skill list (restart or reload the client if needed).
+   When all checks pass, delete the test folder.
+
+8. Report back with:
+   - the install path;
+   - the Python path and version;
+   - the full output of `bpi.py doctor` and of the smoke test;
+   - anything you could not install and why.
+   Do not edit any file inside the skill folder. If a check fails, fix the cause (a missing package, the wrong interpreter, PATH) and run the check again. Do not change the scripts to make a check pass.
+```
+
 ## Command reference
 
 ```
@@ -113,7 +191,7 @@ submission remain the responsibility of the filer and counsel. Always review the
 
 **流程**：理解要求文件 → 摸底附件 → 与用户确认括号口径 → 先做样例 → 逐单元制作（OCR、自动标注、逐页复核、生成）→ 三重防泄露检查（文字自检 `audit`、公开版重新 OCR `qa`、逐页目视）→ `gate` 验收通过 → 交付报告。不确定下一步时运行 `bpi.py next`。
 
-**安装**：本技能必须在安装于本机的客户端软件（桌面版或命令行版 AI 助手）中使用，不能在网页版中使用——网页版在云端沙盒里运行代码，通常装不上所需的 Python 包（PyMuPDF），附件也得上传到云端。安装步骤见上文 Installation；Windows 详细中文步骤见 [`docs/windows-install.zh.md`](docs/windows-install.zh.md)。
+**安装**：本技能必须在安装于本机的客户端软件（桌面版或命令行版 AI 助手）中使用，不能在网页版中使用——网页版在云端沙盒里运行代码，通常装不上所需的 Python 包（PyMuPDF），附件也得上传到云端。安装步骤见上文 Installation；如果让 AI 助手代为安装，把上文 “Let an agent install it” 中的英文提示词整段发给它，它会装好技能和全部依赖，并用冒烟测试自检；Windows 详细中文步骤见 [`docs/windows-install.zh.md`](docs/windows-install.zh.md)。
 
 **声明**：本工具仅辅助文件制作，不构成法律意见；括号认定和最终提交由提交方及其律师负责，提交前请务必复核。
 
