@@ -712,7 +712,7 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
                 if plain and len(re.sub(r"\D", "", DATE.sub("", tok))) < 9:
                     continue                      # dates and short numbers are not account / phone / ID numbers
                 if plain and re.search(r"[A-Za-z][-–_/.]?$", t[:m.start()]):
-                    continue                      # part of a document code (INV-2023-..., P2404...), not a number
+                    continue                      # part of a document code (INV-2023-..., PO1234...), not a number
                 s0 = t.rfind(" ", 0, m.start()) + 1
                 word = t[s0:m.end()]
                 if own_code.search(word) or own.search(word):

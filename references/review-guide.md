@@ -162,7 +162,7 @@ rectangle lying across the text: move that edge into the gap between the columns
 blue print (overlay translations): "2913|00%" there means the bracket ends inside the amount and its last
 digits are visible. **A `qa-cut` finding cannot be acknowledged.** It is measured on the page (ink on both sides of
 the edge, or the text inside the edge starts in the middle of a word), not estimated: half a character is either
-a leak – "Northst|ar" leaves "ar" of a manufacturer name – or a damaged public word – "2019-|07-20". Do not
+a leak – "Northst|ar" leaves "ar" of a manufacturer name – or a damaged public word – "2024-|03-15". Do not
 argue it away as "the OCR merged two cells": move the edge into the gap and run qa again. A scanned table is often
 skewed, so one straight edge fits the top rows and cuts the bottom ones (or the reverse):
 `bpi.py columns KEY FILE PAGE Y0 Y1` lists the table's vertical rules, how far they drift, and the x of every
