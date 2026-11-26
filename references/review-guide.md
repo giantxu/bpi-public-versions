@@ -126,9 +126,11 @@ and your brackets and lists
   cover page); `pair` – a payment / late-delivery clause bracketed in the original but not in its translation,
   or the reverse;
 - `seal` – a seal proposal left unbracketed, or a faint mark at the left / right page edge that is not text:
-  a grey cross-page seal has no colour to find it by. Zoom in and **read** it – colour and position do not say
-  whose seal it is. The counterparty's fragment gets its own rectangle; the submitter's own is acknowledged,
-  quoting the words read on it. Never put a "Supplier seal" bracket on a seal you have not read;
+  a grey cross-page seal has no colour to find it by. A "very faint mark" is a seal so pale that it hardly shows
+  at normal size – the finding gives the zoom command; such a fragment is often the counterparty's seal next to
+  a darker fragment of the submitter's own, so read each one separately. Zoom in and **read** it – colour and
+  position do not say whose seal it is. The counterparty's fragment gets its own rectangle; the submitter's own
+  is acknowledged, quoting the words read on it. Never put a "Supplier seal" bracket on a seal you have not read;
 - `code` – an unbracketed QR code / barcode with its decoded content;
 - over-bracketing: `own` – a bracket covers the submitter's own name / address lines, or a bracket labelled as a
   supplier's seal lies on the submitter's own seal; `wide` – one bracket covers more than a third of the page
@@ -156,7 +158,19 @@ by text can start one character late without the audit seeing it: `Free On Board
 'Amount' starts at |` means "12" is visible in the Public version; `Manager: 王|小明` means the family name is.
 Move the edge (`grow`, or a corrected `text` / `after` pattern) so that the whole word, name or number is inside,
 or – when it cuts public text – so that it is outside. "The left edge … cuts through 12 text lines" is a column
-rectangle lying across the text: move that edge into the gap between the columns. Verify each hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
+rectangle lying across the text: move that edge into the gap between the columns. This also works on red or
+blue print (overlay translations): "2913|00%" there means the bracket ends inside the amount and its last
+digits are visible. **A `qa-cut` finding cannot be acknowledged.** It is measured on the page (ink on both sides of
+the edge, or the text inside the edge starts in the middle of a word), not estimated: half a character is either
+a leak – "Northst|ar" leaves "ar" of a manufacturer name – or a damaged public word – "2019-|07-20". Do not
+argue it away as "the OCR merged two cells": move the edge into the gap and run qa again. A scanned table is often
+skewed, so one straight edge fits the top rows and cuts the bottom ones (or the reverse):
+`bpi.py columns KEY FILE PAGE Y0 Y1` lists the table's vertical rules, how far they drift, and the x of every
+rule in each band of rows – give the column one rectangle per band, x0 / x1 on the rules either side of it,
+each with the same label, the bands touching but not overlapping. An edge lying on a printed rule is fine: a
+character that touches the rule is not "cut". Only when an edge truly cannot be placed,
+show the spot to the user; with their approval, `bpi.py ack KEY ID --user "their words" -m "why"`.
+Verify each other hit on the page (`bpi.py page KEY FILE PAGE public`); typical false positives: a
 bracketed price "240.00" equals a public postcode "24000"; a public contract number contains a bracketed number.
 Fix real leaks, `ack` verified false positives. A "supplier term visible" hit often means the supplier regex is too
 strict for a misreading in the OCR cache: anchor the regex on a short distinctive fragment of the name. qa cannot

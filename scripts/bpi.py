@@ -12,6 +12,7 @@ Run from the matter folder (the one holding bpi_config.json):
   python bpi.py sheets KEY [FILE ...]    review contact sheets -> _work/sheets/KEY/sheet_###.png
   python bpi.py page KEY FILE PAGE [public] [X0 Y0 X1 Y1]   one page, large, with a labelled grid and box ids
   python bpi.py lines KEY FILE PAGE [Y0 Y1]   numbered text lines with boxes (anchors for edits)
+  python bpi.py columns KEY FILE PAGE [Y0 Y1] vertical table rules and their drift: where column brackets go
   python bpi.py boxes KEY FILE [PAGE]    final brackets with ids and the text each one covers
   python bpi.py check KEY|all            apply the edit file without building; list every problem
   python bpi.py build KEY [FILE ...]|all write BPI + Public PDFs
@@ -710,8 +711,11 @@ def cmd_qa(args):
         print(f"== qa {key} ({folder}): {len(opened)} open, {len(items) - len(opened)} acknowledged")
         for x in opened:
             print(f"   [{x['id']}] {x['file']} p{x['page']}: {x['text']}")
+        if any(x["kind"] in K.NO_ACK for x in opened):
+            print("   qa-cut: the edge measurably runs through ink of a character - move it into the gap (one rectangle per "
+                  "group of rows where the scan is skewed); these cannot be acknowledged")
     print("TOTAL open qa hits:", total, "  (verify each on the Public page: bpi.py page KEY FILE PAGE public ; "
-          "real leak -> fix + rebuild ; false positive -> bpi.py ack KEY ID -m \"reason\")")
+          "real leak -> fix + rebuild ; false positive -> bpi.py ack KEY ID -m \"reason\" ; qa-cut -> move the edge)")
 
 
 REASON = {
@@ -794,7 +798,7 @@ CMDS = {"init": cmd_init, "doctor": cmd_doctor, "survey": cmd_survey, "ocr": cmd
         "terms-check": cmd_terms_check, "propose": cmd_propose, "sheets": cmd_sheets, "page": cmd_page, "lines": cmd_lines,
         "boxes": cmd_boxes, "check": cmd_check, "build": cmd_build, "pubsheets": cmd_pubsheets, "qa": cmd_qa,
         "audit": _lazy("cmd_audit"), "ack": _lazy("cmd_ack"), "acks": _lazy("cmd_acks"), "gate": _lazy("cmd_gate"),
-        "viewed": _lazy("cmd_viewed"), "samples-ok": _lazy("cmd_samples_ok"), "next": _lazy("cmd_next"),
+        "viewed": _lazy("cmd_viewed"), "columns": _lazy("cmd_columns"), "samples-ok": _lazy("cmd_samples_ok"), "next": _lazy("cmd_next"),
         "log": cmd_log, "status": cmd_status}
 
 if __name__ == "__main__":

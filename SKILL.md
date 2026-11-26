@@ -41,7 +41,8 @@ one visible supplier name or account number is a failed job, however many pages 
    read it before you label it. If you cannot view images, say so; do not record a check you did not make.
 8. **Never silence a finding.** Fix the cause, or `ack` it with the true reason why the item is public. Never make
    a finding disappear by drawing a bigger bracket over text that is not confidential – the audit reports that
-   too. Acknowledged items go into your report.
+   too. Acknowledged items go into your report. A `qa-cut` (a bracket edge measured running through a
+   character) cannot be acknowledged at all – move the edge.
 9. **The same thing gets the same treatment everywhere:** a total bracketed on the item list is bracketed on the
    cover page; a clause bracketed in the original is bracketed in its translation.
 10. Commands that write need an explicit unit key (`build 205`, not `build`). Work only on the units you were given.

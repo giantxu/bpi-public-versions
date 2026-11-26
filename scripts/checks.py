@@ -260,6 +260,115 @@ def qty_cells(lines):
     return out
 
 
+def _ink(page, dpi=200):
+    """bool ink mask of a page. Black print is darker than 140 grey. Red or blue print (translations, stamps) is
+    lighter - about 150 grey, thin strokes lighter still - so a clearly coloured pixel counts as ink up to 175 in
+    its darkest channel. Yellow highlighter is never ink."""
+    import numpy as np
+    from compat import fitz
+    pc = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
+    rgb = np.frombuffer(pc.samples, dtype=np.uint8).reshape(pc.height, pc.width, 3).astype(np.int16)
+    mn, sat = rgb.min(2), rgb.max(2) - rgb.min(2)
+    return ((mn < 140) | ((sat > 50) & (mn < 175))) & ~((rgb[:, :, 0] > 180) & (rgb[:, :, 1] > 180))
+
+
+def _line_mask(ink, gap=6, frac=0.03, vertical_only=False):
+    """pixels of table rules, so that a character touching a rule is not joined to it and a bracket edge lying on a
+    rule does not count as cutting the character. Vertical rules: runs of ink at least frac of the page height after
+    bridging breaks of up to gap pixels (scanned rules are broken). Horizontal rules: runs at least frac of the page
+    width with no bridging - letters of a word are separated by a pixel or two, and bridging would turn a line of
+    small text into a 'rule'. One pixel either side of a rule is included (blurred scan edges)."""
+    import numpy as np
+
+    def runs(m, n):            # m: bool [rows, cols]; -> pixels in vertical runs >= n
+        fw = np.zeros(m.shape, np.int32); bw = np.zeros(m.shape, np.int32)
+        c = np.zeros(m.shape[1], np.int32)
+        for y in range(m.shape[0]):
+            c = (c + 1) * m[y]; fw[y] = c
+        c[:] = 0
+        for y in range(m.shape[0] - 1, -1, -1):
+            c = (c + 1) * m[y]; bw[y] = c
+        return m & (fw + bw - 1 >= n)
+    H, W = ink.shape
+    a = ink | np.roll(ink, 1, 1) | np.roll(ink, -1, 1)          # a skewed rule steps one column sideways
+    d = a.copy()                                               # close vertical breaks of up to gap pixels
+    for k in range(1, gap // 2 + 1):
+        d |= np.roll(a, k, 0) | np.roll(a, -k, 0)
+    e = d.copy()
+    for k in range(1, gap // 2 + 1):
+        e &= np.roll(d, k, 0) & np.roll(d, -k, 0)
+    v = runs(e | a, int(frac * H))
+    v |= np.roll(v, 1, 1) | np.roll(v, -1, 1)
+    if vertical_only:
+        return ink & v
+    h = runs(ink.T, int(frac * W)).T
+    h |= np.roll(h, 1, 0) | np.roll(h, -1, 0)
+    return ink & (v | h)
+
+
+def vertical_rules(page, y0=0.0, y1=1.0, dpi=200):
+    """vertical table rules between y0 and y1 -> [(fit, ya, yb)]: fit(y) = x of the rule at height y (page
+    fractions, a straight line fitted to the rule, so a skewed scan shows as a drift), ya..yb = where it runs."""
+    import numpy as np
+    ink = _ink(page, dpi)
+    H, W = ink.shape
+    v = _line_mask(ink, vertical_only=True)
+    a, b = int(y0 * H), max(int(y0 * H) + 1, int(y1 * H))
+    prof = v[a:b].sum(0)
+    out, x = [], 0
+    while x < W:
+        if prof[x] < 0.15 * (b - a):
+            x += 1; continue
+        x2 = x
+        while x2 + 1 < W and prof[x2 + 1] >= 0.02 * (b - a):
+            x2 += 1
+        lo, hi = max(0, x - 8), min(W, x2 + 9)
+        ys, xs = np.nonzero(v[a:b, lo:hi])
+        if len(ys) > 20:
+            ys = (ys + a + 0.5) / H; xs = (xs + lo + 0.5) / W
+            m, c = np.polyfit(ys, xs, 1)
+            out.append((lambda y, m=m, c=c: m * y + c, float(ys.min()), float(ys.max())))
+        x = x2 + 9
+    return out
+
+
+def cmd_columns(args):
+    """columns KEY FILE PAGE [Y0 Y1]: the vertical rules of a table with their drift, and where a column bracket's
+    left / right edge has to be in each band of rows. A scanned table is rarely straight: one rectangle with
+    straight edges fits the top rows and cuts the characters of the bottom ones (or the reverse)."""
+    import bpi as B
+    from compat import fitz
+    cfg = C.Cfg()
+    if len(args) < 3:
+        raise SystemExit("usage: bpi.py columns KEY FILE PAGE [Y0 Y1]   (Y0 Y1 = the rows of the table, page fractions)")
+    key, folder = cfg.unit(args[0])
+    f, path, mode, out = B._find_file(cfg, folder, args[1])
+    pg = int(args[2])
+    y0, y1 = (float(args[3]), float(args[4])) if len(args) > 4 else (0.0, 1.0)
+    page = fitz.open(path)[pg - 1]
+    if page.rotation:
+        page.remove_rotation()
+    rl = vertical_rules(page, y0, y1)
+    if not rl:
+        print("no vertical rules found in that range - a table without ruled columns: place edges by text (table / text edits)")
+        return
+    ya, yb = max(y0, min(r[1] for r in rl)), min(y1, max(r[2] for r in rl))
+    drift = max(abs(r[0](yb) - r[0](ya)) for r in rl)
+    n = max(1, min(12, int(drift / 0.002 + 0.999)))
+    print(f"{out} p{pg}: {len(rl)} vertical rules, y {ya:.3f}-{yb:.3f}, drift up to {drift:.4f} of the page width")
+    for i, (fx, a, b) in enumerate(rl):
+        print(f"   R{i + 1:<2d} x {fx(a):.4f} (y {a:.3f})  ->  {fx(b):.4f} (y {b:.3f})")
+    if n == 1:
+        print("one rectangle per column is enough: x0 = the rule left of the column, x1 = the rule right of it")
+        return
+    print(f"split each column bracket into {n} rectangles, one per band of rows - x0 / x1 = the rules either side "
+          f"of the column in that band (same label on each; they must touch, not overlap):")
+    e = [ya + (yb - ya) * k / n for k in range(n + 1)]
+    for a, b in zip(e[:-1], e[1:]):
+        m = (a + b) / 2
+        print(f"   y {a:.4f}-{b:.4f}:  " + "  ".join(f"R{i + 1} {fx(m):.4f}" for i, (fx, _, _) in enumerate(rl)))
+
+
 def edge_cuts(cfg, page, regs, lines, backend=None, dpi=200):
     """A bracket that starts one character late or ends one early: "Invoice No.: N[ST-2023-01]", "Total 12[,345.00]".
     Character positions estimated from line boxes are too coarse to see that, so this reads the page again: for
@@ -294,7 +403,11 @@ def edge_cuts(cfg, page, regs, lines, backend=None, dpi=200):
     pm = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
     img = Image.frombytes("L", (pm.width, pm.height), pm.samples)
     import numpy as np
-    ink = np.frombuffer(pm.samples, dtype=np.uint8).reshape(pm.height, pm.width) < 140
+    # ink: black print darker than 140 grey. Red or blue print (translations, stamps) is lighter - about 150 grey,
+    # thin strokes lighter still - so a clearly coloured pixel counts as ink up to 175 in its darkest channel.
+    # Yellow highlighter is never ink.
+    ink = _ink(page, dpi)
+    rules = _line_mask(ink)
     crops, through, glyph = [], [], []
     for side, d, q, xa, xb, _ in tasks:
         pad = d["h"] * 0.3
@@ -305,8 +418,12 @@ def edge_cuts(cfg, page, regs, lines, backend=None, dpi=200):
         xe = box[0] if side == "L" else box[2]
         cp = max(6, int(d["h"] * pm.height * 0.6))
         ya, yb = max(0, int(d["y"] * pm.height)), min(pm.height, int((d["y"] + d["h"]) * pm.height) + 1)
+        # a character: 30% of the line height - but an OCR box often spans two printed rows, so never more than
+        # about a small letter (0.6% of the page height)
+        tall_ = min(0.3 * (yb - ya), 0.006 * pm.height)
         win = ink[ya:yb, max(0, xe - cp):min(pm.width, xe + cp)].copy()
         c0 = xe - max(0, xe - cp)
+        win &= ~rules[ya:yb, max(0, xe - cp):min(pm.width, xe + cp)]
         hit_ = False
         if win.size and 2 <= c0 < win.shape[1] - 2:
             win &= ~(win.sum(0) > 0.85 * win.shape[0])[None, :]       # cell borders
@@ -319,15 +436,16 @@ def edge_cuts(cfg, page, regs, lines, backend=None, dpi=200):
                 for ny, nx in ((cy_ + 1, cx_), (cy_ - 1, cx_), (cy_, cx_ + 1), (cy_, cx_ - 1)):
                     if 0 <= ny < win.shape[0] and 0 <= nx < win.shape[1] and win[ny, nx] and (ny, nx) not in seen_:
                         seen_.add((ny, nx)); stack.append((ny, nx))
-            hit_ = bool(ys_) and c0 - lo_ >= 3 and hi_ - c0 >= 3 and max(ys_) - min(ys_) + 1 >= 0.3 * (yb - ya)
+            hit_ = bool(ys_) and c0 - lo_ >= 3 and hi_ - c0 >= 3 and max(ys_) - min(ys_) + 1 >= tall_
         through.append(hit_)
         # is the last thing on the visible side of the edge a character (not a colon, a comma or blank paper)?
         hw = max(5, int(d["h"] * pm.height * 0.5))
-        vwin = ink[ya:yb, max(0, xe - hw):xe] if side == "L" else ink[ya:yb, xe:min(pm.width, xe + hw)]
+        va, vb = (max(0, xe - hw), xe) if side == "L" else (xe, min(pm.width, xe + hw))
+        vwin = ink[ya:yb, va:vb] & ~rules[ya:yb, va:vb]
         vwin = vwin & ~(vwin.sum(0) > 0.85 * max(1, vwin.shape[0]))[None, :] if vwin.size else vwin
         rows_ = np.flatnonzero(vwin.sum(1) >= 1) if vwin.size else []
         span_ = (rows_[-1] - rows_[0] + 1) if len(rows_) else 0
-        glyph.append(bool(span_ >= 0.3 * (yb - ya) and len(rows_) >= 0.75 * span_))
+        glyph.append(bool(span_ >= tall_ and len(rows_) >= 0.75 * span_))
     gap, y, tops = 40, 40, []
     wmax = max((c.width for c in crops if c), default=0)
     if not wmax:
@@ -417,7 +535,7 @@ def page_ink(cfg, folder, f, path, pages_lines):
     if cp.exists():
         try:
             c = json.loads(cp.read_text(encoding="utf-8"))
-            if c.get("mtime") == mt and c.get("v") == 1:
+            if c.get("mtime") == mt and c.get("v") == 2:
                 return c["pages"]
         except Exception:
             pass
@@ -426,9 +544,12 @@ def page_ink(cfg, folder, f, path, pages_lines):
         page = doc[int(pg) - 1]
         if page.rotation:
             page.remove_rotation()
-        res[str(pg)] = seals.ink_boxes(page, [[d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]] for d in lines])
+        tb = [[d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"]] for d in lines]
+        bl = seals.ink_boxes(page, tb)
+        bl += [b for b in seals.faint_edge_marks(page, tb) if cover(b["r"], [{"r": o["r"]} for o in bl]) < 0.5]
+        res[str(pg)] = bl
     cp.parent.mkdir(parents=True, exist_ok=True)
-    cp.write_text(json.dumps({"v": 1, "mtime": mt, "pages": res}), encoding="utf-8")
+    cp.write_text(json.dumps({"v": 2, "mtime": mt, "pages": res}), encoding="utf-8")
     return res
 
 
@@ -628,8 +749,11 @@ def audit_unit(cfg, key, folder, only=None, codes=True):
         for b in ink.get((f, str(pg)), []):
             if seals.edge_seal_like(b) and cover(b["r"], regs) < 0.5 \
                     and not any(cover(b["r"], [{"r": q["r"]}]) > 0.5 for q in p["auto"] if q["src"].startswith("seal")):
-                add("seal", f, out, pg, b["r"], "faint mark at the page edge that is not text - a cross-page seal fragment? "
-                    "zoom in (bpi.py page) and read it")
+                r = b["r"]
+                z = f"{max(0, r[0] - .03):.2f} {max(0, r[1] - .03):.2f} {min(1, r[2] + .03):.2f} {min(1, r[3] + .03):.2f}"
+                add("seal", f, out, pg, r, (f"very faint mark at the page edge, hardly visible at normal size - a pale "
+                    f"cross-page seal? zoom in: bpi.py page KEY \"{out}\" {pg} {z} - and read it" if b.get("faint") else
+                    "faint mark at the page edge that is not text - a cross-page seal fragment? zoom in (bpi.py page) and read it"))
         # 5. QR codes / barcodes
         for c in cds_by[f].get(int(pg), []):
             if cover(c["r"], regs) < 0.6:
@@ -714,9 +838,17 @@ def ack_path(cfg, key):
     return cfg.work / "ack" / f"{key}.json"
 
 
-def load_acks(cfg, key):
+# findings that are measured, not estimated: a bracket edge that runs through a character / starts inside a word is
+# always wrong (half a character is either a leak or a damaged public word). The fix is to move the edge; such a
+# finding can be acknowledged only with the user's own approval (--user), never on the reviewer's word alone.
+NO_ACK = {"qa-cut"}
+
+
+def load_acks(cfg, key, raw=False):
+    """-> {id: ack}. Without raw, acknowledgements of NO_ACK kinds that lack the user's approval do not count."""
     p = ack_path(cfg, key)
-    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    a = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    return a if raw else {i: x for i, x in a.items() if x.get("kind") not in NO_ACK or x.get("user")}
 
 
 def load_qa(cfg, key):
@@ -773,8 +905,16 @@ def cmd_audit(args):
 
 def cmd_ack(args):
     """ack KEY ID [ID ...] -m "reason"        acknowledge audit / qa findings by id
-       ack KEY --kind pay [--file F] [--pages 52-116] -m "reason"   acknowledge all current open findings matching"""
+       ack KEY --kind pay [--file F] [--pages 52-116] -m "reason"   acknowledge all current open findings matching
+       qa-cut findings: only with --user "what the user said after looking at that edge" """
     cfg = C.Cfg()
+    user = ""
+    if "--user" in args:
+        j = args.index("--user")
+        if j + 1 >= len(args):
+            raise SystemExit('--user needs the words of the user, e.g. --user "checked p5 row 21, the edge only touches the table rule"')
+        user = args[j + 1].strip()
+        args = args[:j] + args[j + 2:]
     if "-m" not in args or args.index("-m") + 1 >= len(args):
         raise SystemExit('ack needs a reason:  bpi.py ack KEY ID [ID ...] -m "why this is not a leak"')
     i = args.index("-m")
@@ -805,15 +945,29 @@ def cmd_ack(args):
             if opts.get("pages") and x["page"] not in E.parse_pages(opts["pages"], 10 ** 6):
                 continue
             ids.append(x["id"])
-    acks = load_acks(cfg, key)
-    n = 0
+    acks = load_acks(cfg, key, raw=True)
+    n, refused = 0, []
     for i_ in ids:
         if i_ not in known:
             print(f"   unknown id {i_} (run audit / qa first; ids change when the text or box changes)"); continue
         x = known[i_]
+        if x["kind"] in NO_ACK and not user:
+            refused.append(x); continue
         acks[i_] = {"reason": reason, "kind": x["kind"], "file": x["file"], "page": x["page"], "text": x["text"][:80],
                     "time": time.strftime("%Y-%m-%d %H:%M")}
+        if x["kind"] in NO_ACK:
+            acks[i_]["user"] = user
         n += 1
+    if refused:
+        print(f"   NOT acknowledged: {len(refused)} qa-cut finding(s) - a bracket edge that runs through a character or starts "
+              f"inside a word cannot be acknowledged. The measurement found ink on both sides of the edge; half a "
+              f"character is either a leak (the rest of a name or number) or a damaged public word. Move the edge "
+              f"into the gap, then rebuild and run qa again:")
+        for x in refused:
+            print(f"      [{x['id']}] {x['file']} p{x['page']}: {x['text'][:90]}")
+        print("   A column that drifts across a skewed scan needs one rectangle per group of rows (or a table edit), not one "
+              "straight edge for the whole column. Only if the edge still cannot be placed: show the spot to the user "
+              "(bpi.py page KEY FILE PAGE public X0 Y0 X1 Y1) and, with their approval, ack ... --user \"their words\" -m \"why\".")
     ack_path(cfg, key).parent.mkdir(exist_ok=True)
     ack_path(cfg, key).write_text(json.dumps(acks, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"acknowledged {n} finding(s) in unit {key}. They are listed in the final report (bpi.py acks {key}).")
@@ -823,15 +977,20 @@ def cmd_acks(args):
     cfg = C.Cfg()
     import bpi as B
     for key, folder, _ in B.targets(cfg, args, "acks", need=False):
-        acks = load_acks(cfg, key)
+        acks = load_acks(cfg, key, raw=True)
         if not acks:
             continue
-        print(f"== {key}: {len(acks)} acknowledged finding(s)")
+        void = {i for i, a in acks.items() if a.get("kind") in NO_ACK and not a.get("user")}
+        print(f"== {key}: {len(acks) - len(void)} acknowledged finding(s)")
+        if void:
+            print(f"   {len(void)} qa-cut acknowledgement(s) without the user's approval do NOT count - fix those edges: "
+                  + " ".join(sorted(void)))
         by = {}
         for i, a in acks.items():
-            by.setdefault(a["reason"], []).append((i, a))
-        for reason, lst in by.items():
-            print(f"   reason: {reason}  ({len(lst)})")
+            if i not in void:
+                by.setdefault((a["reason"], a.get("user", "")), []).append((i, a))
+        for (reason, user), lst in by.items():
+            print(f"   reason: {reason}  ({len(lst)})" + (f"\n   approved by the user: {user}" if user else ""))
             for i, a in lst[:12]:
                 print(f"      [{i}] {a['kind']} {a['file']} p{a['page']}: {a['text'][:70]}")
             if len(lst) > 12:
@@ -882,7 +1041,9 @@ def gate_unit(cfg, key, folder, codes=True):
         res.append((False, "qa run on the current build", f"bpi.py qa {key}"))
     else:
         oq = [x for x in qa["items"] if x["id"] not in acks]
-        res.append((not oq, "qa: no open hits", f"bpi.py qa {key}  ({len(oq)} open) - fix, or acknowledge verified false positives"))
+        nc = sum(1 for x in oq if x["kind"] in NO_ACK)
+        res.append((not oq, "qa: no open hits", f"bpi.py qa {key}  ({len(oq)} open" + (f", {nc} qa-cut: move those edges, they cannot be "
+                    f"acknowledged" if nc else "") + ") - fix, or acknowledge verified false positives"))
     pd = cfg.work / "pub" / key
     sheets = sorted(pd.glob("pub_*.png")) if pd.exists() else []
     ok_sheets = bool(sheets) and min(s.stat().st_mtime for s in sheets) >= t_out and built

@@ -119,6 +119,43 @@ def ink_boxes(page, text_boxes, dpi=60, cell=5):
     return out
 
 
+def faint_edge_marks(page, text_boxes, dpi=60, cell=8):
+    """Very faint marks near the left / right page edge - a light grey cross-page seal that ink_boxes misses because
+    its few strokes are too thin and too pale to form a blob. Only marks paler than ordinary print or stamps
+    (mean grey 210 or more) are returned, so red text, own seals and punch holes stay out.
+    -> [{"r", "dens", "mean", "faint": True}]"""
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width).astype(int)
+    H, W = a.shape
+    m = a < int(np.median(a)) - 14
+    for b in text_boxes:
+        x0, y0, x1, y1 = int((b[0] - .006) * W), int((b[1] - .004) * H), int((b[2] + .006) * W) + 1, int((b[3] + .004) * H) + 1
+        m[max(0, y0):y1, max(0, x0):x1] = False
+    dark = a < 150
+    m[dark.sum(1) > W * 0.15, :] = False           # table rules
+    m[:, dark.sum(0) > H * 0.15] = False
+    m[:, int(0.12 * W):int(0.88 * W)] = False      # edges only
+    m[:, :int(0.025 * W)] = False                  # the scanner's own edge strip
+    m[:, W - int(0.012 * W):] = False
+    gh, gw = H // cell, W // cell
+    g = m[:gh * cell, :gw * cell].reshape(gh, cell, gw, cell).sum((1, 3))
+    out = []
+    for x0, y0, x1, y1, _ in _components(g >= 3):
+        sub = m[y0 * cell:y1 * cell, x0 * cell:x1 * cell]
+        ink = int(sub.sum())
+        w, h = (x1 - x0) / gw, (y1 - y0) / gh
+        if w < 0.03 or h < 0.04 or ink < 60:
+            continue
+        mean = int(a[y0 * cell:y1 * cell, x0 * cell:x1 * cell][sub].mean())
+        if mean < 210:
+            continue
+        if sub.sum(0).max() > 0.6 * sub.shape[0] or sub.sum(1).max() > 0.6 * sub.shape[1]:
+            continue                               # a faint ruled line or table border, not a seal
+        out.append({"r": [round(float(x0 / gw), 4), round(float(y0 / gh), 4), round(float(x1 / gw), 4), round(float(y1 / gh), 4)],
+                    "dens": round(float(ink / max(1, sub.size)), 3), "mean": mean, "faint": True})
+    return out
+
+
 def edge_seal_like(b):
     """a faint, sparse mark at the left / right page edge: what a cross-page seal fragment looks like"""
     r = b["r"]
